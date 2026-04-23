@@ -4,6 +4,17 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.2 - SmartMonitor GUI Workflow Refinements
+
+- Added separate SmartMonitor GUI actions for vendor `.ui` conversion and classic theme conversion.
+- Added a `Force upload` button to upload the selected SmartMonitor theme immediately.
+- Added a `Doctor` button in the GUI to run first-launch diagnostics without using the terminal.
+- Added live HID status in `configure.py` with periodic refresh.
+- Added a SmartMonitor info box showing theme kind, runtime mode, compiler/source details, linked UI, and runtime tags.
+- Added SmartMonitor preview rendering from linked `.ui` projects using background and image widgets when available.
+- Added tooltip descriptions for SmartMonitor GUI buttons.
+- Reworked the SmartMonitor lower control area to avoid text/button overlap and improve readability.
+
 ## v0.3.1 - Installer and First-Run Diagnostics
 
 - Added `install.sh` to create a virtual environment, install Python requirements, and run first-run checks.
