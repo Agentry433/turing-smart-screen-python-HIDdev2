@@ -37,7 +37,7 @@ import babel
 from datetime import datetime, timezone
 from library.smartmonitor_compile import compile_theme_file
 from library.smartmonitor_classic_theme_convert import convert_classic_theme_to_smartmonitor_project
-from library.smartmonitor_ui import encode_ui_file
+from library.smartmonitor_ui import encode_ui_file, parse_theme_bundle, resolve_theme_path
 
 try:
     import tkinter.ttk as ttk
@@ -675,6 +675,118 @@ def get_smartmonitor_theme_source_ui(name: str):
     return ""
 
 
+def describe_smartmonitor_theme(info: dict, theme_name: str) -> tuple[str, str, str]:
+    compiler = (info.get("compiler") or "").strip()
+    source_vendor_theme = (info.get("source_vendor_theme") or "").strip()
+    source_theme = (info.get("source_theme") or "").strip()
+    source_ui = (info.get("source_ui") or "").strip()
+
+    theme_lower = str(theme_name or "").lower()
+
+    if compiler == "classic_theme_to_imgdat":
+        kind = "classic-converted"
+        runtime = "best-effort runtime"
+    elif compiler == "experimental_ui_to_imgdat":
+        kind = "vendor-compiled" if source_vendor_theme else "compiled"
+        runtime = "experimental runtime"
+    elif source_vendor_theme or "vendor" in theme_lower:
+        kind = "vendor"
+        runtime = "mapped runtime"
+    else:
+        kind = "bundled dat"
+        runtime = "runtime unknown"
+
+    details = []
+    if compiler:
+        details.append(f"Compiler: {compiler}")
+    if source_vendor_theme:
+        details.append(f"Vendor source: {source_vendor_theme}")
+    elif source_theme:
+        details.append(f"Classic source: {Path(source_theme).name}")
+    elif info.get("source_file"):
+        details.append(f"Source file: {Path(info['source_file']).name}")
+
+    source_line = ""
+    if source_ui:
+        source_line = f"Linked UI: {Path(source_ui).name}"
+
+    return f"Kind: {kind} | {runtime}", " | ".join(details), source_line
+
+
+def get_smartmonitor_theme_runtime_summary(name: str) -> str:
+    source_ui = get_smartmonitor_theme_source_ui(name)
+    if not source_ui:
+        return ""
+
+    try:
+        bundle = parse_theme_bundle(source_ui)
+    except Exception:
+        return ""
+
+    metric_labels: dict[int, str] = {}
+    for widget in bundle.theme.widgets:
+        if widget.sensor is None or widget.sensor.fast_sensor < 0:
+            continue
+        label = widget.sensor.reading_name or widget.sensor.sensor_name or widget.object_name
+        metric_labels.setdefault(int(widget.sensor.fast_sensor), str(label))
+
+    if not metric_labels:
+        return ""
+
+    ordered = sorted(metric_labels.items(), key=lambda item: item[0])
+    preview = ", ".join(f"{tag}:{label}" for tag, label in ordered[:8])
+    if len(ordered) > 8:
+        preview += ", ..."
+    return f"Runtime tags: {preview}"
+
+
+def build_smartmonitor_preview(theme_name: str) -> Image.Image | None:
+    source_ui = get_smartmonitor_theme_source_ui(theme_name)
+    if not source_ui:
+        return None
+
+    try:
+        bundle = parse_theme_bundle(source_ui)
+    except Exception:
+        return None
+
+    base_dir = Path(bundle.base_dir)
+    width = 480
+    height = 320
+    if bundle.theme.widget_parents:
+        width = max(1, bundle.theme.widget_parents[0].geometry.width or width)
+        height = max(1, bundle.theme.widget_parents[0].geometry.height or height)
+
+    canvas = Image.new("RGBA", (width, height), (15, 23, 32, 255))
+
+    if bundle.theme.widget_parents:
+        parent = bundle.theme.widget_parents[0]
+        if parent.background_image_path:
+            try:
+                bg_path = resolve_theme_path(base_dir, parent.background_image_path)
+                with Image.open(bg_path) as bg_image:
+                    bg = bg_image.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
+                    canvas.alpha_composite(bg, (0, 0))
+            except Exception:
+                pass
+
+    for widget in bundle.theme.widgets:
+        if widget.widget_type != 4 or widget.style is None or not widget.style.bg_image_path:
+            continue
+        try:
+            image_path = resolve_theme_path(base_dir, widget.style.bg_image_path)
+            with Image.open(image_path) as image:
+                rendered = image.convert("RGBA").resize(
+                    (max(1, widget.geometry.width), max(1, widget.geometry.height)),
+                    Image.Resampling.LANCZOS,
+                )
+                canvas.alpha_composite(rendered, (widget.geometry.x, widget.geometry.y))
+        except Exception:
+            continue
+
+    return canvas.convert("RGB")
+
+
 def get_smartmonitor_theme_name_from_path(path: str):
     if not path:
         return None
@@ -739,7 +851,7 @@ class TuringConfigWindow:
     def __init__(self):
         self.window = Tk()
         self.window.title('Turing System Monitor configuration')
-        self.window.geometry("940x640")
+        self.window.geometry("940x820")
         self.window.iconphoto(True, PhotoImage(file=MAIN_DIRECTORY + "res/icons/monitor-icon-17865/64.png"))
         # When window gets focus again, reload theme preview in case it has been updated by theme editor
         self.window.bind("<FocusIn>", self.on_theme_change)
@@ -756,6 +868,9 @@ class TuringConfigWindow:
         self.theme_preview.place(x=10, y=10)
 
         self.theme_author = ttk.Label(self.window)
+        self.smartmonitor_info_box = Text(self.window, wrap=WORD, height=7)
+        self.smartmonitor_info_box.place(x=10, y=520, width=330, height=180)
+        self.smartmonitor_info_box.config(state="disabled")
 
         sysmon_label = ttk.Label(self.window, text='Display configuration', font='bold')
         sysmon_label.place(x=370, y=0)
@@ -839,58 +954,143 @@ class TuringConfigWindow:
 
         self.weather_ping_btn = ttk.Button(self.window, text="Weather",
                                            command=lambda: self.on_weatherping_click())
-        self.weather_ping_btn.place(x=20, y=505, height=42, width=105)
+        self.weather_ping_btn.place(x=360, y=585, height=42, width=100)
+        self.weather_ping_tooltip = ToolTip(
+            self.weather_ping_btn,
+            msg="Open extra weather and ping configuration.",
+        )
 
         self.open_theme_folder_btn = ttk.Button(self.window, text="Themes",
                                          command=lambda: self.on_open_theme_folder_click())
-        self.open_theme_folder_btn.place(x=135, y=505, height=42, width=105)
+        self.open_theme_folder_btn.place(x=470, y=585, height=42, width=100)
+        self.open_theme_folder_tooltip = ToolTip(
+            self.open_theme_folder_btn,
+            msg="Classic mode: open the themes folder.\n"
+                "SmartMonitor mode: import all vendor theme_* folders.",
+        )
 
         self.edit_theme_btn = ttk.Button(self.window, text="Edit theme", command=lambda: self.on_theme_editor_click())
-        self.edit_theme_btn.place(x=250, y=505, height=42, width=105)
+        self.edit_theme_btn.place(x=580, y=585, height=42, width=100)
+        self.edit_theme_tooltip = ToolTip(
+            self.edit_theme_btn,
+            msg="Classic mode: open the classic theme editor.\n"
+                "SmartMonitor mode: import a ready .dat theme file.",
+        )
 
         self.edit_ui_btn = ttk.Button(
             self.window,
             text="Edit UI",
             command=lambda: self.on_edit_ui_click(),
         )
-        self.edit_ui_btn.place(x=365, y=505, height=42, width=105)
-
-        self.convert_theme_btn = ttk.Button(
-            self.window,
-            text="Convert",
-            command=lambda: self.on_theme_convert_click(),
+        self.edit_ui_btn.place(x=690, y=585, height=42, width=100)
+        self.edit_ui_tooltip = ToolTip(
+            self.edit_ui_btn,
+            msg="Open the linked SmartMonitor .ui source in the visual editor,\n"
+                "or choose another .ui file manually.",
         )
-        self.convert_theme_btn.place(x=480, y=505, height=42, width=105)
+
+        self.vendor_convert_btn = ttk.Button(
+            self.window,
+            text="Vendor UI",
+            command=lambda: self.on_smartmonitor_ui_convert_click(),
+        )
+        self.vendor_convert_btn.place(x=800, y=585, height=42, width=110)
+        self.vendor_convert_tooltip = ToolTip(
+            self.vendor_convert_btn,
+            msg="Compile a vendor SmartMonitor .ui project into a .dat theme\n"
+                "and add it to the GUI theme list.",
+        )
+
+        self.classic_convert_btn = ttk.Button(
+            self.window,
+            text="Classic->DAT",
+            command=lambda: self.on_smartmonitor_classic_theme_convert_click(),
+        )
+        self.classic_convert_btn.place(x=360, y=635, height=42, width=110)
+        self.classic_convert_tooltip = ToolTip(
+            self.classic_convert_btn,
+            msg="Convert a classic theme.yaml theme into a SmartMonitor .dat theme.\n"
+                "A linked editable .ui project is saved for later editing.",
+        )
 
         self.new_ui_btn = ttk.Button(
             self.window,
             text="New UI",
             command=lambda: self.on_new_ui_project_click(),
         )
-        self.new_ui_btn.place(x=595, y=505, height=42, width=105)
+        self.new_ui_btn.place(x=480, y=635, height=42, width=100)
+        self.new_ui_tooltip = ToolTip(
+            self.new_ui_btn,
+            msg="Create a new starter SmartMonitor UI project with background,\n"
+                "config.ini and editable encrypted .ui source.",
+        )
 
         self.autostart_enable_btn = ttk.Button(
             self.window,
             text="Autostart ON",
             command=lambda: self.on_enable_autostart_click(),
         )
-        self.autostart_enable_btn.place(x=20, y=555, height=42, width=120)
+        self.autostart_enable_btn.place(x=360, y=685, height=42, width=110)
+        self.autostart_enable_tooltip = ToolTip(
+            self.autostart_enable_btn,
+            msg="Enable Linux user autostart via systemd --user.",
+        )
 
         self.autostart_disable_btn = ttk.Button(
             self.window,
             text="Autostart OFF",
             command=lambda: self.on_disable_autostart_click(),
         )
-        self.autostart_disable_btn.place(x=150, y=555, height=42, width=120)
+        self.autostart_disable_btn.place(x=480, y=685, height=42, width=110)
+        self.autostart_disable_tooltip = ToolTip(
+            self.autostart_disable_btn,
+            msg="Disable Linux user autostart and remove the user service file.",
+        )
+
+        self.force_upload_btn = ttk.Button(
+            self.window,
+            text="Force upload",
+            command=lambda: self.on_force_upload_click(),
+        )
+        self.force_upload_btn.place(x=590, y=635, height=42, width=110)
+        self.force_upload_tooltip = ToolTip(
+            self.force_upload_btn,
+            msg="Upload the currently selected SmartMonitor .dat theme immediately,\n"
+                "without waiting for Save and run.",
+        )
+
+        self.doctor_btn = ttk.Button(
+            self.window,
+            text="Doctor",
+            command=lambda: self.on_doctor_click(),
+        )
+        self.doctor_btn.place(x=710, y=635, height=42, width=90)
+        self.doctor_tooltip = ToolTip(
+            self.doctor_btn,
+            msg="Run first-launch diagnostics: Python packages, config, themes,\n"
+                "USB HID visibility and hidraw access.",
+        )
 
         self.save_btn = ttk.Button(self.window, text="Save", command=lambda: self.on_save_click())
-        self.save_btn.place(x=280, y=555, height=42, width=120)
+        self.save_btn.place(x=600, y=685, height=42, width=90)
+        self.save_tooltip = ToolTip(
+            self.save_btn,
+            msg="Save configuration changes to config.yaml.",
+        )
 
         self.save_run_btn = ttk.Button(self.window, text="Save + run", command=lambda: self.on_saverun_click())
-        self.save_run_btn.place(x=410, y=555, height=42, width=120)
+        self.save_run_btn.place(x=700, y=685, height=42, width=120)
+        self.save_run_tooltip = ToolTip(
+            self.save_run_btn,
+            msg="Save config and start/restart the monitor runtime with the selected theme.",
+        )
+
+        self.hid_status_label = ttk.Label(self.window, text="")
+        self.hid_status_label.place(x=360, y=740)
 
         self.config = None
         self.load_config_values()
+        self.window.after(1500, self.poll_hid_status)
 
     def run(self):
         self.window.mainloop()
@@ -905,8 +1105,10 @@ class TuringConfigWindow:
             self.open_theme_folder_btn.config(text="Vendor set")
             self.edit_theme_btn.config(text="Import .dat")
             self.edit_ui_btn.config(text="Edit UI", state="normal")
-            self.convert_theme_btn.config(text="Convert")
+            self.vendor_convert_btn.config(text="Vendor UI", state="normal")
+            self.classic_convert_btn.config(text="Classic->DAT", state="normal")
             self.new_ui_btn.config(text="New UI", state="normal")
+            self.force_upload_btn.config(state="normal")
         else:
             size = self.size_cb.get().replace(SIZE_2_x_INCH, SIZE_2_1_INCH)
             themes = get_themes(size)
@@ -914,8 +1116,10 @@ class TuringConfigWindow:
             self.open_theme_folder_btn.config(text="Themes")
             self.edit_theme_btn.config(text="Edit theme")
             self.edit_ui_btn.config(text="Edit UI", state="disabled")
-            self.convert_theme_btn.config(text="Convert", state="disabled")
+            self.vendor_convert_btn.config(text="Vendor UI", state="disabled")
+            self.classic_convert_btn.config(text="Classic->DAT", state="disabled")
             self.new_ui_btn.config(text="New UI", state="disabled")
+            self.force_upload_btn.config(state="disabled")
 
         self.theme_cb.config(values=themes)
         if not themes:
@@ -923,11 +1127,53 @@ class TuringConfigWindow:
         elif self.theme_cb.get() not in themes:
             self.theme_cb.set(themes[0])
         self.refresh_autostart_buttons()
+        self.refresh_hid_status()
+
+    def refresh_hid_status(self):
+        if not self.is_smartmonitor_model():
+            self.hid_status_label.config(text="")
+            return
+
+        hid_path = ""
+        try:
+            from library.lcd.lcd_comm_rev_a_hid import LcdCommRevAHid
+
+            selected_port = self.com_cb.get().strip()
+            if selected_port.startswith("/dev/hidraw") and os.path.exists(selected_port):
+                hid_path = selected_port
+            else:
+                hid_path = LcdCommRevAHid.auto_detect_com_port() or ""
+        except Exception:
+            hid_path = ""
+
+        if hid_path and os.path.exists(hid_path):
+            if os.access(hid_path, os.R_OK | os.W_OK):
+                self.hid_status_label.config(text=f"HID: {hid_path} ready", foreground="#228b22")
+            else:
+                self.hid_status_label.config(text=f"HID: {hid_path} no access", foreground="#cc8800")
+        else:
+            self.hid_status_label.config(text="HID: not detected", foreground="#cc0000")
+
+    def set_smartmonitor_info_text(self, text: str):
+        self.smartmonitor_info_box.config(state="normal")
+        self.smartmonitor_info_box.delete("1.0", END)
+        if text:
+            self.smartmonitor_info_box.insert("1.0", text)
+        self.smartmonitor_info_box.config(state="disabled")
+
+    def poll_hid_status(self):
+        try:
+            self.refresh_hid_status()
+        finally:
+            if self.window.winfo_exists():
+                self.window.after(2500, self.poll_hid_status)
 
     def load_theme_preview(self):
         if self.is_smartmonitor_model():
             theme_name = self.theme_cb.get()
-            theme_preview = Image.open(MAIN_DIRECTORY + "res/docs/no-preview.png")
+            theme_preview = build_smartmonitor_preview(theme_name)
+            if theme_preview is None:
+                theme_preview = Image.open(MAIN_DIRECTORY + "res/docs/no-preview.png")
             theme_preview.thumbnail((320, 480), Image.Resampling.LANCZOS)
             self.theme_preview_img = ImageTk.PhotoImage(theme_preview)
             self.theme_preview.config(image=self.theme_preview_img)
@@ -945,6 +1191,14 @@ class TuringConfigWindow:
             self.theme_author.config(text=author_text, foreground="#a3a3a3", cursor="")
             self.theme_author.unbind("<Button-1>")
             self.theme_author.place(x=10, y=self.theme_preview_img.height() + 15)
+
+            meta_text, details_text, source_text = describe_smartmonitor_theme(info, theme_name)
+            info_lines = [line for line in (meta_text, details_text, source_text) if line]
+            self.set_smartmonitor_info_text("\n".join(info_lines))
+            runtime_text = get_smartmonitor_theme_runtime_summary(theme_name)
+            info_lines = [line for line in (meta_text, details_text, source_text, runtime_text) if line]
+            self.set_smartmonitor_info_text("\n".join(info_lines))
+            self.smartmonitor_info_box.place(x=10, y=520, width=330, height=180)
             return
 
         theme_data = get_theme_data(self.theme_cb.get())
@@ -972,6 +1226,8 @@ class TuringConfigWindow:
                 self.theme_author.config(foreground="#a3a3a3", cursor="")
                 self.theme_author.unbind("<Button-1>")
             self.theme_author.place(x=10, y=self.theme_preview_img.height() + 15)
+            self.set_smartmonitor_info_text("")
+            self.smartmonitor_info_box.place_forget()
 
     def load_config_values(self):
         with open(MAIN_DIRECTORY + "config.yaml", "rt", encoding='utf8') as stream:
@@ -1065,6 +1321,7 @@ class TuringConfigWindow:
         self.on_theme_change()
         self.on_brightness_change()
         self.on_hwlib_change()
+        self.refresh_hid_status()
 
         # Load configuration to sub-window as well
         self.more_config_window.load_config_values(self.config)
@@ -1130,6 +1387,7 @@ class TuringConfigWindow:
 
     def on_theme_change(self, e=None):
         self.load_theme_preview()
+        self.refresh_hid_status()
 
     def on_weatherping_click(self):
         self.more_config_window.show()
@@ -1156,7 +1414,7 @@ class TuringConfigWindow:
 
     def on_theme_convert_click(self):
         if self.is_smartmonitor_model():
-            self.on_smartmonitor_convert_click()
+            self.on_smartmonitor_ui_convert_click()
             return
 
     def on_new_ui_project_click(self):
@@ -1513,22 +1771,6 @@ class TuringConfigWindow:
             parent=self.window,
         )
 
-    def on_smartmonitor_convert_click(self):
-        source_kind = messagebox.askyesnocancel(
-            "Choose conversion source",
-            "What do you want to convert?\n\n"
-            "Yes: vendor SmartMonitor .ui -> .dat\n"
-            "No: classic YAML theme -> SmartMonitor .dat\n"
-            "Cancel: do nothing",
-            parent=self.window,
-        )
-        if source_kind is None:
-            return
-        if source_kind:
-            self.on_smartmonitor_ui_convert_click()
-        else:
-            self.on_smartmonitor_classic_theme_convert_click()
-
     def on_smartmonitor_new_ui_project_click(self):
         os.makedirs(DEFAULT_SMARTMONITOR_PROJECTS_DIR, exist_ok=True)
         parent_dir = filedialog.askdirectory(
@@ -1613,6 +1855,71 @@ class TuringConfigWindow:
 
         editor_script = os.path.join(MAIN_DIRECTORY, "smartmonitor-theme-editor.py")
         subprocess.Popen([sys.executable, editor_script, source_ui])
+
+    def on_force_upload_click(self):
+        if not self.is_smartmonitor_model():
+            return
+
+        theme_name = self.theme_cb.get()
+        theme_path = resolve_smartmonitor_theme_path(theme_name)
+        if not theme_name or not theme_path:
+            messagebox.showerror("No theme selected", "Select a SmartMonitor theme first.", parent=self.window)
+            return
+
+        try:
+            from library.lcd.lcd_comm_rev_a_hid import LcdCommRevAHid
+        except Exception as exc:
+            messagebox.showerror("Upload unavailable", str(exc), parent=self.window)
+            return
+
+        selected_port = self.com_cb.get().strip()
+        port = "AUTO" if self.com_cb.current() == 0 or not selected_port else selected_port
+        try:
+            lcd = LcdCommRevAHid(com_port=port)
+            lcd.openSerial()
+            lcd.smartmonitor_upload_theme(str(Path(theme_path).expanduser()))
+            lcd.closeSerial()
+        except Exception as exc:
+            try:
+                lcd.closeSerial()
+            except Exception:
+                pass
+            messagebox.showerror("Theme upload failed", str(exc), parent=self.window)
+            self.refresh_hid_status()
+            return
+
+        self.refresh_hid_status()
+        messagebox.showinfo(
+            "Theme uploaded",
+            f"Theme '{theme_name}' was uploaded to the monitor.",
+            parent=self.window,
+        )
+
+    def on_doctor_click(self):
+        tool = os.path.join(MAIN_DIRECTORY, "tools", "smartmonitor-theme-manager.py")
+        try:
+            result = subprocess.run(
+                [sys.executable, tool, "doctor"],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except Exception as exc:
+            messagebox.showerror("Doctor failed", str(exc), parent=self.window)
+            return
+
+        output = (result.stdout or "").strip()
+        errors = (result.stderr or "").strip()
+        if errors:
+            output = f"{output}\n\n{errors}".strip()
+        if not output:
+            output = "No output"
+
+        if result.returncode == 0:
+            messagebox.showinfo("Doctor", output, parent=self.window)
+        else:
+            messagebox.showwarning("Doctor", output, parent=self.window)
+        self.refresh_hid_status()
 
     def on_smartmonitor_vendor_import_click(self):
         initial_dir = DEFAULT_SMARTMONITOR_VENDOR_THEME_ROOT if os.path.isdir(DEFAULT_SMARTMONITOR_VENDOR_THEME_ROOT) \
