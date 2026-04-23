@@ -19,6 +19,7 @@ _RUNTIME_READY = True
 _RUNTIME_DISABLED_REASON: str | None = None
 _DISK_IO_SAMPLE: tuple[float, float] | None = None
 _RUNTIME_THREADS: list[threading.Thread] = []
+_WEATHER_CACHE: tuple[float, dict[str, float]] | None = None
 _THEME_DEFAULT_TAGS: dict[str, dict[str, int]] = {
     "theme_science fiction.dat": {
         "CPU_PERCENT": 3,
@@ -41,6 +42,33 @@ _THEME_DEFAULT_FLAGS: dict[str, dict[str, bool]] = {
     "theme_science fiction.dat": {
         "SMARTMONITOR_HID_SEND_TIME": False,
     },
+}
+_METRIC_LABELS: dict[str, str] = {
+    "CPU_TEMP": "CPU temperature",
+    "CPU_PERCENT": "CPU usage",
+    "CPU_FREQ_MHZ": "CPU frequency",
+    "CPU_FAN": "CPU fan",
+    "GPU_TEMP": "GPU temperature",
+    "GPU_PERCENT": "GPU usage",
+    "GPU_FPS": "GPU FPS",
+    "GPU_MEM_PERCENT": "GPU memory %",
+    "GPU_MEM_USED_MB": "GPU memory used",
+    "GPU_FREQ_MHZ": "GPU frequency",
+    "RAM_PERCENT": "RAM usage",
+    "RAM_USED_GB": "RAM used",
+    "RAM_FREE_GB": "RAM free",
+    "RAM_TOTAL_GB": "RAM total",
+    "DISK_PERCENT": "Disk activity",
+    "DISK_USED_GB": "Disk used",
+    "DISK_FREE_GB": "Disk free",
+    "DISK_TOTAL_GB": "Disk total",
+    "NET_UP_KBPS": "Upload KB/s",
+    "NET_DOWN_KBPS": "Download KB/s",
+    "SOUND_VOLUME": "Sound volume",
+    "UPTIME_HOURS": "Uptime hours",
+    "WEATHER_TEMP": "Weather temperature",
+    "WEATHER_FEELS_LIKE": "Weather feels like",
+    "WEATHER_HUMIDITY": "Weather humidity",
 }
 
 
@@ -159,6 +187,8 @@ def _derive_metric_name(sensor_type_name: str, sensor_name: str, reading_name: s
         return "GPU_MEM_PERCENT"
     if sensor_type == "usage" and "gpu" in reading:
         return "GPU_PERCENT"
+    if sensor_type == "other" and "fps" in reading:
+        return "GPU_FPS"
     if sensor_type == "other" and "physical memory load" in reading:
         return "RAM_PERCENT"
     if sensor_type == "other" and "physical memory used" in reading:
@@ -187,11 +217,61 @@ def _derive_metric_name(sensor_type_name: str, sensor_name: str, reading_name: s
         return "SOUND_VOLUME"
     if sensor_type == "other" and "system uptime hours" in reading:
         return "UPTIME_HOURS"
+    if sensor_type == "other" and "weather temperature" in reading:
+        return "WEATHER_TEMP"
+    if sensor_type == "other" and "weather feels like" in reading:
+        return "WEATHER_FEELS_LIKE"
+    if sensor_type == "other" and "weather humidity" in reading:
+        return "WEATHER_HUMIDITY"
     if "network:" in sensor and "current up rate" in reading:
         return "NET_UP_KBPS"
     if "network:" in sensor and "current dl rate" in reading:
         return "NET_DOWN_KBPS"
     return None
+
+
+def get_runtime_metric_choices() -> list[str]:
+    return sorted(_METRIC_LABELS.keys())
+
+
+def get_runtime_metric_label(metric_name: str) -> str:
+    return _METRIC_LABELS.get(metric_name, metric_name.replace("_", " ").title())
+
+
+def _theme_runtime_rows_from_bundle(theme_bundle) -> list[dict]:
+    rows: list[dict] = []
+    if theme_bundle is None:
+        return rows
+
+    for widget in theme_bundle.theme.widgets:
+        if widget.sensor is None or widget.sensor.fast_sensor < 0:
+            continue
+        metric_name = _derive_metric_name(
+            widget.sensor.sensor_type_name,
+            widget.sensor.sensor_name,
+            widget.sensor.reading_name,
+        )
+        rows.append({
+            "tag": int(widget.sensor.fast_sensor),
+            "metric": metric_name or "",
+            "metric_label": get_runtime_metric_label(metric_name) if metric_name else "",
+            "sensor_type_name": widget.sensor.sensor_type_name or "",
+            "sensor_name": widget.sensor.sensor_name or "",
+            "reading_name": widget.sensor.reading_name or "",
+            "object_name": widget.object_name or "",
+            "widget_type": int(widget.widget_type),
+        })
+
+    rows.sort(key=lambda item: (item["tag"], item["object_name"]))
+    return rows
+
+
+def get_theme_runtime_rows(theme_name_or_path: str | Path) -> list[dict]:
+    identifier = str(theme_name_or_path or "").strip()
+    if not identifier:
+        return []
+    theme_stem = Path(identifier).stem
+    return _theme_runtime_rows_from_bundle(_theme_bundle(theme_stem))
 
 
 def _theme_sensor_mapping() -> dict[str, int]:
@@ -405,6 +485,12 @@ def _gpu_freq_mhz() -> float:
     return stats.sensors.Gpu.frequency()
 
 
+def _gpu_fps() -> float:
+    import library.stats as stats
+
+    return stats.sensors.Gpu.fps()
+
+
 def _cpu_fan_percent() -> float:
     import library.stats as stats
 
@@ -415,7 +501,82 @@ def _cpu_fan_percent() -> float:
 
 
 def _sound_volume_percent() -> float:
+    import re
+    import shutil
+    import subprocess
+
+    candidates = [
+        ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+        ["pamixer", "--get-volume"],
+        ["amixer", "get", "Master"],
+    ]
+    for command in candidates:
+        if shutil.which(command[0]) is None:
+            continue
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=2.0)
+        except Exception:
+            continue
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        if command[0] == "wpctl":
+            match = re.search(r"Volume:\s*([0-9]*\.?[0-9]+)", output)
+            if match:
+                return float(match.group(1)) * 100.0
+        else:
+            match = re.search(r"([0-9]{1,3})%", output)
+            if match:
+                return float(match.group(1))
     return math.nan
+
+
+def _weather_metrics() -> dict[str, float]:
+    global _WEATHER_CACHE
+    now = time.monotonic()
+    if _WEATHER_CACHE is not None:
+        cached_at, cached_values = _WEATHER_CACHE
+        if now - cached_at < 300.0:
+            return dict(cached_values)
+
+    values = {
+        "WEATHER_TEMP": math.nan,
+        "WEATHER_FEELS_LIKE": math.nan,
+        "WEATHER_HUMIDITY": math.nan,
+    }
+
+    try:
+        import requests
+    except Exception:
+        _WEATHER_CACHE = (now, values)
+        return dict(values)
+
+    config_section = config.CONFIG_DATA.get("config", {})
+    lat = config_section.get("WEATHER_LATITUDE", "")
+    lon = config_section.get("WEATHER_LONGITUDE", "")
+    api_key = config_section.get("WEATHER_API_KEY", "")
+    units = config_section.get("WEATHER_UNITS", "metric")
+    lang = config_section.get("WEATHER_LANGUAGE", "en")
+
+    if not api_key or not lat or not lon:
+        _WEATHER_CACHE = (now, values)
+        return dict(values)
+
+    url = (
+        "https://api.openweathermap.org/data/3.0/onecall"
+        f"?lat={lat}&lon={lon}&exclude=minutely,hourly,daily,alerts"
+        f"&appid={api_key}&units={units}&lang={lang}"
+    )
+    try:
+        response = requests.get(url, timeout=5.0)
+        if response.status_code == 200:
+            data = response.json().get("current", {})
+            values["WEATHER_TEMP"] = float(data.get("temp", math.nan))
+            values["WEATHER_FEELS_LIKE"] = float(data.get("feels_like", math.nan))
+            values["WEATHER_HUMIDITY"] = float(data.get("humidity", math.nan))
+    except Exception:
+        pass
+
+    _WEATHER_CACHE = (now, values)
+    return dict(values)
 
 
 def _collect_metric_value(metric_name: str, update_interval: float):
@@ -426,6 +587,7 @@ def _collect_metric_value(metric_name: str, update_interval: float):
         "CPU_FAN": lambda: _sticky_metric_value("CPU_FAN", _cpu_fan_percent(), min_valid=1),
         "GPU_TEMP": lambda: _sticky_metric_value("GPU_TEMP", __import__("library.stats", fromlist=[""]).sensors.Gpu.stats()[4], min_valid=1),
         "GPU_PERCENT": lambda: _sticky_metric_value("GPU_PERCENT", _gpu_percent(), min_valid=0),
+        "GPU_FPS": lambda: _sticky_metric_value("GPU_FPS", _gpu_fps(), min_valid=0),
         "GPU_MEM_PERCENT": lambda: _sticky_metric_value("GPU_MEM_PERCENT", _gpu_mem_percent(), min_valid=0),
         "GPU_MEM_USED_MB": lambda: _sticky_metric_value("GPU_MEM_USED_MB", _gpu_mem_used_mb(), min_valid=0),
         "GPU_FREQ_MHZ": lambda: _sticky_metric_value("GPU_FREQ_MHZ", _gpu_freq_mhz(), min_valid=1),
@@ -441,6 +603,9 @@ def _collect_metric_value(metric_name: str, update_interval: float):
         "NET_DOWN_KBPS": lambda: _sticky_metric_value("NET_DOWN_KBPS", _network_rates_kbps(update_interval)[1], min_valid=0),
         "SOUND_VOLUME": lambda: _sticky_metric_value("SOUND_VOLUME", _sound_volume_percent(), min_valid=0),
         "UPTIME_HOURS": lambda: _sticky_metric_value("UPTIME_HOURS", _uptime_hours(), min_valid=0),
+        "WEATHER_TEMP": lambda: _sticky_metric_value("WEATHER_TEMP", _weather_metrics()["WEATHER_TEMP"]),
+        "WEATHER_FEELS_LIKE": lambda: _sticky_metric_value("WEATHER_FEELS_LIKE", _weather_metrics()["WEATHER_FEELS_LIKE"]),
+        "WEATHER_HUMIDITY": lambda: _sticky_metric_value("WEATHER_HUMIDITY", _weather_metrics()["WEATHER_HUMIDITY"], min_valid=0),
     }
     reader = metric_readers.get(metric_name)
     if reader is None:
@@ -537,6 +702,21 @@ def _collect_runtime_pairs() -> list[tuple[int, int]]:
     return pairs
 
 
+def _log_theme_runtime_fields():
+    rows = get_theme_runtime_rows(_active_theme_name())
+    if not rows:
+        logger.info("SmartMonitor theme fields: no runtime-capable sensor widgets resolved for '%s'", _active_theme_name())
+        return
+
+    preview = "; ".join(
+        f"tag {row['tag']} -> {row['metric'] or 'unmapped'} [{row['sensor_name']}/{row['reading_name']}]"
+        for row in rows[:12]
+    )
+    if len(rows) > 12:
+        preview += "; ..."
+    logger.info("SmartMonitor theme fields (%d): %s", len(rows), preview)
+
+
 def _send_runtime_snapshot(lcd, log_label: str | None = None):
     pairs = _collect_runtime_pairs()
     last_error = None
@@ -625,6 +805,7 @@ def initialize_display():
         logger.info("SmartMonitor live runtime is disabled for the active compiled theme; theme-only mode is active")
         return
 
+    _log_theme_runtime_fields()
     logger.info("SmartMonitor runtime tag mapping: %s", _tag_mapping())
 
     warmup_cycles = 3 if uploaded_theme else 1

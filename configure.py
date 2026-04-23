@@ -872,7 +872,7 @@ class TuringConfigWindow:
     def __init__(self):
         self.window = Tk()
         self.window.title('Turing System Monitor configuration')
-        self.window.geometry("940x820")
+        self.window.geometry("940x980")
         self.window.iconphoto(True, PhotoImage(file=MAIN_DIRECTORY + "res/icons/monitor-icon-17865/64.png"))
         # When window gets focus again, reload theme preview in case it has been updated by theme editor
         self.window.bind("<FocusIn>", self.on_theme_change)
@@ -892,6 +892,54 @@ class TuringConfigWindow:
         self.smartmonitor_info_box = Text(self.window, wrap=WORD, height=7)
         self.smartmonitor_info_box.place(x=10, y=520, width=330, height=180)
         self.smartmonitor_info_box.config(state="disabled")
+        self.runtime_tags_frame = ttk.LabelFrame(self.window, text="Runtime tags")
+        self.runtime_tags_frame.place(x=10, y=740, width=910, height=210)
+        self.runtime_tags_tree = ttk.Treeview(
+            self.runtime_tags_frame,
+            columns=("tag", "theme_metric", "effective_metric", "reading"),
+            show="headings",
+            height=6,
+            selectmode="browse",
+        )
+        self.runtime_tags_tree.heading("tag", text="Tag")
+        self.runtime_tags_tree.heading("theme_metric", text="Theme metric")
+        self.runtime_tags_tree.heading("effective_metric", text="Effective metric")
+        self.runtime_tags_tree.heading("reading", text="Sensor / Reading")
+        self.runtime_tags_tree.column("tag", width=55, anchor="center")
+        self.runtime_tags_tree.column("theme_metric", width=160, anchor="w")
+        self.runtime_tags_tree.column("effective_metric", width=170, anchor="w")
+        self.runtime_tags_tree.column("reading", width=455, anchor="w")
+        self.runtime_tags_tree.place(x=10, y=10, width=870, height=145)
+        self.runtime_tags_scroll = ttk.Scrollbar(self.runtime_tags_frame, orient="vertical", command=self.runtime_tags_tree.yview)
+        self.runtime_tags_scroll.place(x=880, y=10, height=145)
+        self.runtime_tags_tree.configure(yscrollcommand=self.runtime_tags_scroll.set)
+        self.runtime_tags_tree.bind("<Button-1>", self.on_runtime_tag_click)
+        self.runtime_tags_tree.bind("<Double-1>", self.on_map_runtime_tag_click)
+        self.runtime_map_btn = ttk.Button(
+            self.runtime_tags_frame,
+            text="Map selected",
+            command=lambda: self.on_map_runtime_tag_click(),
+        )
+        self.runtime_map_btn.place(x=10, y=165, width=130, height=30)
+        self.runtime_map_tooltip = ToolTip(
+            self.runtime_map_btn,
+            msg="Assign the selected fastSensor tag to a runtime metric override.",
+        )
+        self.runtime_clear_btn = ttk.Button(
+            self.runtime_tags_frame,
+            text="Clear selected",
+            command=lambda: self.on_clear_runtime_tag_click(),
+        )
+        self.runtime_clear_btn.place(x=150, y=165, width=120, height=30)
+        self.runtime_clear_tooltip = ToolTip(
+            self.runtime_clear_btn,
+            msg="Remove the runtime override currently assigned to the selected fastSensor tag.",
+        )
+        self.runtime_tags_hint = ttk.Label(
+            self.runtime_tags_frame,
+            text="Theme metric comes from .ui parsing. Effective metric includes manual overrides.",
+        )
+        self.runtime_tags_hint.place(x=285, y=170)
 
         sysmon_label = ttk.Label(self.window, text='Display configuration', font='bold')
         sysmon_label.place(x=370, y=0)
@@ -1119,7 +1167,7 @@ class TuringConfigWindow:
         )
 
         self.hid_status_label = ttk.Label(self.window, text="")
-        self.hid_status_label.place(x=360, y=740)
+        self.hid_status_label.place(x=360, y=955)
 
         self.config = None
         self.load_config_values()
@@ -1196,6 +1244,101 @@ class TuringConfigWindow:
             self.smartmonitor_info_box.insert("1.0", text)
         self.smartmonitor_info_box.config(state="disabled")
 
+    def current_runtime_tag_overrides(self) -> dict[str, int]:
+        if not isinstance(self.config, dict):
+            return {}
+        display_cfg = self.config.setdefault("display", {})
+        raw = display_cfg.get("SMARTMONITOR_HID_TAGS", {}) or {}
+        resolved = {}
+        for key, value in raw.items():
+            try:
+                resolved[str(key)] = int(value)
+            except Exception:
+                continue
+        return resolved
+
+    def set_runtime_tag_overrides(self, overrides: dict[str, int]):
+        if not isinstance(self.config, dict):
+            return
+        self.config.setdefault("display", {})["SMARTMONITOR_HID_TAGS"] = dict(sorted(overrides.items()))
+
+    def refresh_runtime_tags_table(self):
+        for item_id in self.runtime_tags_tree.get_children():
+            self.runtime_tags_tree.delete(item_id)
+
+        if not self.is_smartmonitor_model():
+            self.runtime_tags_frame.place_forget()
+            return
+
+        self.runtime_tags_frame.place(x=10, y=740, width=910, height=210)
+        theme_name = self.theme_cb.get()
+        if not theme_name:
+            return
+
+        try:
+            from library import smartmonitor_runtime as sm_runtime
+            rows = sm_runtime.get_theme_runtime_rows(theme_name)
+            metric_choices = sm_runtime.get_runtime_metric_choices()
+        except Exception:
+            rows = []
+            metric_choices = []
+
+        overrides = self.current_runtime_tag_overrides()
+        tag_to_override = {int(tag): metric for metric, tag in overrides.items()}
+
+        seen_tags: set[int] = set()
+        for index, row in enumerate(rows):
+            tag = int(row.get("tag", -1))
+            if tag < 0:
+                continue
+            seen_tags.add(tag)
+            theme_metric = str(row.get("metric", "") or "")
+            effective_metric = tag_to_override.get(tag, theme_metric)
+            reading_bits = [part for part in (row.get("sensor_name", ""), row.get("reading_name", "")) if part]
+            reading = " / ".join(str(part) for part in reading_bits)
+            self.runtime_tags_tree.insert(
+                "",
+                "end",
+                iid=f"tag-{tag}-{index}",
+                values=(tag, theme_metric or "-", effective_metric or "-", reading or row.get("object_name", "")),
+            )
+
+        for metric_name, tag in sorted(overrides.items(), key=lambda item: (item[1], item[0])):
+            tag = int(tag)
+            if tag in seen_tags:
+                continue
+            if metric_choices and metric_name not in metric_choices:
+                continue
+            self.runtime_tags_tree.insert(
+                "",
+                "end",
+                iid=f"override-{tag}-{metric_name}",
+                values=(tag, "-", metric_name, "manual override"),
+            )
+
+    def runtime_tag_values_from_event(self, event=None):
+        item_id = ""
+        if event is not None:
+            item_id = self.runtime_tags_tree.identify_row(event.y)
+            if item_id:
+                self.runtime_tags_tree.selection_set(item_id)
+                self.runtime_tags_tree.focus(item_id)
+
+        selection = self.runtime_tags_tree.selection()
+        if not selection and item_id:
+            selection = (item_id,)
+        if not selection:
+            return None
+
+        values = self.runtime_tags_tree.item(selection[0], "values")
+        if not values:
+            return None
+        return values
+
+    def on_runtime_tag_click(self, event=None):
+        self.runtime_tag_values_from_event(event)
+        return "break"
+
     def poll_hid_status(self):
         try:
             self.refresh_hid_status()
@@ -1234,6 +1377,7 @@ class TuringConfigWindow:
             info_lines = [line for line in (meta_text, details_text, source_text, runtime_text) if line]
             self.set_smartmonitor_info_text("\n".join(info_lines))
             self.smartmonitor_info_box.place(x=10, y=520, width=330, height=180)
+            self.refresh_runtime_tags_table()
             return
 
         theme_data = get_theme_data(self.theme_cb.get())
@@ -1263,6 +1407,7 @@ class TuringConfigWindow:
             self.theme_author.place(x=10, y=self.theme_preview_img.height() + 15)
             self.set_smartmonitor_info_text("")
             self.smartmonitor_info_box.place_forget()
+            self.runtime_tags_frame.place_forget()
 
     def load_config_values(self):
         with open(MAIN_DIRECTORY + "config.yaml", "rt", encoding='utf8') as stream:
@@ -1423,6 +1568,79 @@ class TuringConfigWindow:
     def on_theme_change(self, e=None):
         self.load_theme_preview()
         self.refresh_hid_status()
+
+    def on_map_runtime_tag_click(self, event=None):
+        values = self.runtime_tag_values_from_event(event)
+        if not values:
+            messagebox.showinfo("Runtime tags", "Select a runtime tag row first.", parent=self.window)
+            return "break"
+        tag = int(values[0])
+
+        try:
+            from library import smartmonitor_runtime as sm_runtime
+            metric_choices = sm_runtime.get_runtime_metric_choices()
+        except Exception as exc:
+            messagebox.showerror("Runtime tags", str(exc), parent=self.window)
+            return "break"
+
+        if not metric_choices:
+            messagebox.showerror("Runtime tags", "No runtime metrics are available for mapping.", parent=self.window)
+            return "break"
+
+        dialog = Toplevel(self.window)
+        dialog.title("Map runtime tag")
+        dialog.geometry("430x165")
+        dialog.transient(self.window)
+        dialog.resizable(False, False)
+
+        ttk.Label(dialog, text=f"Assign fastSensor tag {tag} to metric:").place(x=15, y=15)
+        metric_cb = ttk.Combobox(dialog, values=metric_choices, state="readonly")
+        current_metric = str(values[2]) if len(values) > 2 and values[2] not in ("", "-") else ""
+        if current_metric in metric_choices:
+            metric_cb.set(current_metric)
+        elif metric_choices:
+            metric_cb.set(metric_choices[0])
+        metric_cb.place(x=15, y=45, width=390)
+
+        def apply_mapping():
+            metric_name = metric_cb.get().strip()
+            if not metric_name:
+                return
+            overrides = self.current_runtime_tag_overrides()
+            for existing_metric, existing_tag in list(overrides.items()):
+                if existing_metric == metric_name or int(existing_tag) == tag:
+                    overrides.pop(existing_metric, None)
+            overrides[metric_name] = int(tag)
+            self.set_runtime_tag_overrides(overrides)
+            self.refresh_runtime_tags_table()
+            dialog.destroy()
+
+        ttk.Button(dialog, text="Apply", command=apply_mapping).place(x=240, y=110, width=80)
+        ttk.Button(dialog, text="Cancel", command=dialog.destroy).place(x=330, y=110, width=80)
+        dialog.update_idletasks()
+        dialog.wait_visibility()
+        dialog.grab_set()
+        metric_cb.focus_set()
+        dialog.wait_window()
+        return "break"
+
+    def on_clear_runtime_tag_click(self):
+        values = self.runtime_tag_values_from_event(None)
+        if not values:
+            messagebox.showinfo("Runtime tags", "Select a runtime tag row first.", parent=self.window)
+            return
+        tag = int(values[0])
+        overrides = self.current_runtime_tag_overrides()
+        removed = False
+        for metric_name, mapped_tag in list(overrides.items()):
+            if int(mapped_tag) == tag:
+                overrides.pop(metric_name, None)
+                removed = True
+        if not removed:
+            messagebox.showinfo("Runtime tags", "The selected tag has no manual override.", parent=self.window)
+            return
+        self.set_runtime_tag_overrides(overrides)
+        self.refresh_runtime_tags_table()
 
     def on_weatherping_click(self):
         self.more_config_window.show()

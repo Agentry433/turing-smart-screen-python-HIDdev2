@@ -4,6 +4,16 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.4 - Runtime Mapping and Tag Overrides
+
+- Added a visible SmartMonitor runtime tag table to `configure.py`.
+- Added manual runtime mapping overrides from theme sensor tags to runtime metrics.
+- Added runtime metric choices and per-tag override editing for SmartMonitor themes.
+- Added startup logging that reports which runtime-capable fields the active theme contains.
+- Added best-effort runtime support for GPU FPS, sound volume, and numeric weather metrics where available.
+- Improved the SmartMonitor runtime-tag GUI with full-width layout and easier single-row selection.
+- Fixed runtime tag popup behavior and double-click mapping in the SmartMonitor configuration workflow.
+
 ## v0.3.3 - Classic Theme Batch Conversion
 
 - Added batch conversion of classic `theme.yaml` themes into SmartMonitor HID themes.
