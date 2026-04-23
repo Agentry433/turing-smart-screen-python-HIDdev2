@@ -31,6 +31,17 @@ For the most stable out-of-the-box setup, use:
 
 ## Quick Start
 
+Recommended:
+
+```bash
+chmod +x install.sh
+./install.sh
+source venv/bin/activate
+python3 configure.py
+```
+
+Manual:
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -43,6 +54,24 @@ Then:
 1. Select `SmartMonitor HID (experimental)`
 2. Select a theme
 3. Click `Save and run`
+
+## First-Run Diagnostics
+
+If the monitor is not detected or themes do not upload, run:
+
+```bash
+python3 tools/smartmonitor-theme-manager.py doctor
+```
+
+For Linux HID permissions, install the included udev rule:
+
+```bash
+sudo cp tools/99-smartmonitor-hiddev.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Then unplug and replug the monitor.
 
 ## Licensing
 

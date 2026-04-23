@@ -1,0 +1,10 @@
+# SmartMonitor HIDdev / Fuldho-style 3.5" HID screen
+# VID:PID observed for this device family: 0483:0065
+#
+# Install:
+#   sudo cp tools/99-smartmonitor-hiddev.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#   unplug and replug the monitor
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="0065", MODE="0666", TAG+="uaccess"

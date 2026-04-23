@@ -31,6 +31,17 @@
 
 ## Быстрый старт
 
+Рекомендуемый вариант:
+
+```bash
+chmod +x install.sh
+./install.sh
+source venv/bin/activate
+python3 configure.py
+```
+
+Ручная установка:
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -43,6 +54,24 @@ python3 configure.py
 1. выбрать `SmartMonitor HID (experimental)`
 2. выбрать тему
 3. нажать `Save and run`
+
+## Диагностика первого запуска
+
+Если монитор не определяется или темы не загружаются, выполните:
+
+```bash
+python3 tools/smartmonitor-theme-manager.py doctor
+```
+
+Для Linux можно установить готовое `udev`-правило для доступа к `hidraw` без ручного `chmod`:
+
+```bash
+sudo cp tools/99-smartmonitor-hiddev.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+После этого отключите и снова подключите монитор.
 
 ## Что изменено относительно оригинала
 

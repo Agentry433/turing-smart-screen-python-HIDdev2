@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -30,6 +31,7 @@ DEFAULT_VENDOR_ROOT = (
     if (REPO_ROOT / "vendor" / "themefor3.5").is_dir()
     else REPO_ROOT / "vendor" / "themefor3.5"
 )
+SMARTMONITOR_VID_PID = "0483:0065"
 
 
 def _yaml():
@@ -322,6 +324,117 @@ def import_all_compiled_vendor_themes(vendor_root: Path):
             print(f"  {name}: {error}")
 
 
+def _check_line(ok: bool, message: str, detail: str = "") -> bool:
+    marker = "OK" if ok else "WARN"
+    print(f"[{marker}] {message}")
+    if detail and not ok:
+        print(f"      {detail}")
+    return ok
+
+
+def _find_hidraw_candidates() -> list[Path]:
+    candidates = []
+    for path in sorted(Path("/dev").glob("hidraw*")):
+        if path.exists():
+            candidates.append(path)
+    return candidates
+
+
+def _lsusb_contains_smartmonitor() -> bool | None:
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["lsusb"],
+            text=True,
+            capture_output=True,
+            timeout=3,
+            check=False,
+        )
+    except Exception:
+        return None
+    return SMARTMONITOR_VID_PID.lower() in result.stdout.lower()
+
+
+def run_doctor():
+    print("SmartMonitor HIDdev doctor")
+    print("==========================")
+    all_ok = True
+
+    all_ok &= _check_line(sys.version_info >= (3, 10), f"Python version: {sys.version.split()[0]}")
+    all_ok &= _check_line(CONFIG_PATH.is_file(), f"config.yaml present: {CONFIG_PATH}")
+    all_ok &= _check_line((REPO_ROOT / "requirements.txt").is_file(), "requirements.txt present")
+
+    try:
+        import PIL  # noqa: F401
+        import psutil  # noqa: F401
+        import ruamel.yaml  # noqa: F401
+        deps_ok = True
+    except ModuleNotFoundError as exc:
+        deps_ok = False
+        all_ok = False
+        _check_line(False, "Python dependencies installed", f"Missing module: {exc.name}")
+    else:
+        _check_line(True, "Python dependencies installed")
+
+    config_ok = False
+    active_theme = None
+    if CONFIG_PATH.is_file() and deps_ok:
+        try:
+            config_data = read_config()
+            display = config_data.get("display", {})
+            revision = display.get("REVISION")
+            active_theme = Path(display.get("SMARTMONITOR_HID_THEME_FILE", "") or "")
+            config_ok = revision == "A_HID"
+            all_ok &= _check_line(config_ok, f"display.REVISION = {revision!r}", "Expected 'A_HID' for this fork")
+        except Exception as exc:
+            all_ok = False
+            _check_line(False, "config.yaml can be parsed", str(exc))
+
+    themes = list_installed_themes()
+    all_ok &= _check_line(bool(themes), f"installed SmartMonitor themes: {len(themes)}")
+
+    if active_theme:
+        if not active_theme.is_absolute():
+            active_theme = REPO_ROOT / active_theme
+        all_ok &= _check_line(active_theme.is_file(), f"active theme file exists: {active_theme}")
+
+    lsusb_state = _lsusb_contains_smartmonitor()
+    if lsusb_state is None:
+        _check_line(False, "lsusb check skipped", "Install usbutils if you want VID:PID detection")
+    else:
+        all_ok &= _check_line(
+            lsusb_state,
+            f"USB device {SMARTMONITOR_VID_PID} visible" if lsusb_state else f"USB device {SMARTMONITOR_VID_PID} not visible",
+            "Connect/replug the SmartMonitor or check USB permissions.",
+        )
+
+    hidraw_candidates = _find_hidraw_candidates()
+    all_ok &= _check_line(bool(hidraw_candidates), f"hidraw devices visible: {', '.join(str(p) for p in hidraw_candidates) or 'none'}")
+    if hidraw_candidates:
+        readable = [path for path in hidraw_candidates if os.access(path, os.R_OK | os.W_OK)]
+        if readable:
+            _check_line(True, f"hidraw read/write permission: {', '.join(str(p) for p in readable)}")
+        else:
+            all_ok = False
+            _check_line(
+                False,
+                "hidraw read/write permission",
+                "Install the udev rule from tools/99-smartmonitor-hiddev.rules or run with adjusted permissions.",
+            )
+
+    print()
+    if all_ok:
+        print("Doctor result: ready")
+    else:
+        print("Doctor result: attention needed")
+        print("Recommended next steps:")
+        print("  1. Run ./install.sh")
+        print("  2. Replug the SmartMonitor")
+        print("  3. Run python3 tools/smartmonitor-theme-manager.py doctor")
+    return 0 if all_ok else 1
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage vendor img.dat themes for the HID SmartMonitor")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -331,6 +444,9 @@ def main():
 
     parser_current = subparsers.add_parser("current", help="Print active SmartMonitor theme file from config.yaml")
     parser_current.set_defaults(func=lambda args: print_current())
+
+    parser_doctor = subparsers.add_parser("doctor", help="Check installation, config, HID device, and theme setup")
+    parser_doctor.set_defaults(func=lambda args: sys.exit(run_doctor()))
 
     parser_vendor = subparsers.add_parser("vendor-list", help="List vendor theme directories found in unpacked app")
     parser_vendor.add_argument("--vendor-root", type=Path, default=DEFAULT_VENDOR_ROOT,
