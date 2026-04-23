@@ -4,6 +4,17 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.5 - SmartMonitor Theme Editor Polish
+
+- Added multi-side resize handles in the SmartMonitor theme editor.
+- Added `Add Image` and `Add Progress` creation actions in the editor toolbar.
+- Added `Undo` / `Redo` support in the SmartMonitor theme editor.
+- Added arrow-key nudging for selected widgets, with optional grid snapping.
+- Added basic multi-select, group alignment tools, and batch duplicate/delete behavior for widgets.
+- Added sensor preset selection for quickly mapping `fastSensor` and sensor fields.
+- Added live canvas preview values for sensors, datetime, weather, and basic custom placeholders.
+- Added `Compile DAT` and `Compile+Upload` actions directly from the editor.
+
 ## v0.3.4 - Runtime Mapping and Tag Overrides
 
 - Added a visible SmartMonitor runtime tag table to `configure.py`.
