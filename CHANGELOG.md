@@ -4,6 +4,13 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.1 - Installer and First-Run Diagnostics
+
+- Added `install.sh` to create a virtual environment, install Python requirements, and run first-run checks.
+- Added `tools/smartmonitor-theme-manager.py doctor` for environment, config, HID device, and theme diagnostics.
+- Added a Linux `udev` rule template for SmartMonitor HID access without manual `chmod`.
+- Updated `README.md` and `README_RU.md` with installer-first setup and first-run troubleshooting steps.
+
 ## v0.3.0 - Classic Theme Conversion Workflow
 
 - Added an MVP converter for classic `theme.yaml` themes to SmartMonitor HID `.dat` themes.
