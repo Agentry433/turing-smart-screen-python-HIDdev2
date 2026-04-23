@@ -155,16 +155,28 @@ def _derive_metric_name(sensor_type_name: str, sensor_name: str, reading_name: s
         return "GPU_TEMP"
     if sensor_type == "usage" and "cpu" in reading:
         return "CPU_PERCENT"
+    if sensor_type == "usage" and "gpu memory" in reading:
+        return "GPU_MEM_PERCENT"
     if sensor_type == "usage" and "gpu" in reading:
         return "GPU_PERCENT"
     if sensor_type == "other" and "physical memory load" in reading:
         return "RAM_PERCENT"
+    if sensor_type == "other" and "physical memory used" in reading:
+        return "RAM_USED_GB"
+    if sensor_type == "other" and "physical memory free" in reading:
+        return "RAM_FREE_GB"
+    if sensor_type == "other" and "physical memory total" in reading:
+        return "RAM_TOTAL_GB"
     if sensor_type == "other" and "disk load" in reading:
         return "DISK_PERCENT"
     if sensor_type == "other" and "disk used" in reading:
         return "DISK_USED_GB"
+    if sensor_type == "other" and "disk free" in reading:
+        return "DISK_FREE_GB"
     if sensor_type == "other" and "disk total" in reading:
         return "DISK_TOTAL_GB"
+    if sensor_type == "other" and "gpu memory used" in reading:
+        return "GPU_MEM_USED_MB"
     if sensor_type == "fan" and "cpu" in reading:
         return "CPU_FAN"
     if sensor_type == "frequency" and "core clock" in reading and "gpu" in sensor:
@@ -173,6 +185,8 @@ def _derive_metric_name(sensor_type_name: str, sensor_name: str, reading_name: s
         return "CPU_FREQ_MHZ"
     if sensor_type == "other" and "sound volume" in reading:
         return "SOUND_VOLUME"
+    if sensor_type == "other" and "system uptime hours" in reading:
+        return "UPTIME_HOURS"
     if "network:" in sensor and "current up rate" in reading:
         return "NET_UP_KBPS"
     if "network:" in sensor and "current dl rate" in reading:
@@ -284,6 +298,15 @@ def _disk_used_gb() -> float:
     return used_bytes / (1024.0 ** 3)
 
 
+def _disk_free_gb() -> float:
+    import library.stats as stats
+
+    free_bytes = stats.sensors.Disk.disk_free()
+    if free_bytes < 0:
+        return math.nan
+    return free_bytes / (1024.0 ** 3)
+
+
 def _disk_total_gb() -> float:
     import library.stats as stats
 
@@ -292,6 +315,40 @@ def _disk_total_gb() -> float:
     if used_bytes < 0 or free_bytes < 0:
         return math.nan
     return (used_bytes + free_bytes) / (1024.0 ** 3)
+
+
+def _ram_used_gb() -> float:
+    import library.stats as stats
+
+    used_bytes = stats.sensors.Memory.virtual_used()
+    if used_bytes < 0:
+        return math.nan
+    return used_bytes / (1024.0 ** 3)
+
+
+def _ram_free_gb() -> float:
+    import library.stats as stats
+
+    free_bytes = stats.sensors.Memory.virtual_free()
+    if free_bytes < 0:
+        return math.nan
+    return free_bytes / (1024.0 ** 3)
+
+
+def _ram_total_gb() -> float:
+    import library.stats as stats
+
+    used_bytes = stats.sensors.Memory.virtual_used()
+    free_bytes = stats.sensors.Memory.virtual_free()
+    if used_bytes < 0 or free_bytes < 0:
+        return math.nan
+    return (used_bytes + free_bytes) / (1024.0 ** 3)
+
+
+def _uptime_hours() -> float:
+    import psutil
+
+    return max(0.0, (time.time() - psutil.boot_time()) / 3600.0)
 
 
 def _disk_busy_percent(update_interval: float) -> float:
@@ -373,12 +430,17 @@ def _collect_metric_value(metric_name: str, update_interval: float):
         "GPU_MEM_USED_MB": lambda: _sticky_metric_value("GPU_MEM_USED_MB", _gpu_mem_used_mb(), min_valid=0),
         "GPU_FREQ_MHZ": lambda: _sticky_metric_value("GPU_FREQ_MHZ", _gpu_freq_mhz(), min_valid=1),
         "RAM_PERCENT": lambda: _sticky_metric_value("RAM_PERCENT", __import__("library.stats", fromlist=[""]).sensors.Memory.virtual_percent()),
+        "RAM_USED_GB": lambda: _sticky_metric_value("RAM_USED_GB", _ram_used_gb(), min_valid=0),
+        "RAM_FREE_GB": lambda: _sticky_metric_value("RAM_FREE_GB", _ram_free_gb(), min_valid=0),
+        "RAM_TOTAL_GB": lambda: _sticky_metric_value("RAM_TOTAL_GB", _ram_total_gb(), min_valid=1),
         "DISK_PERCENT": lambda: _sticky_metric_value("DISK_PERCENT", _disk_busy_percent(update_interval)),
         "DISK_USED_GB": lambda: _sticky_metric_value("DISK_USED_GB", _disk_used_gb(), min_valid=0),
+        "DISK_FREE_GB": lambda: _sticky_metric_value("DISK_FREE_GB", _disk_free_gb(), min_valid=0),
         "DISK_TOTAL_GB": lambda: _sticky_metric_value("DISK_TOTAL_GB", _disk_total_gb(), min_valid=1),
         "NET_UP_KBPS": lambda: _sticky_metric_value("NET_UP_KBPS", _network_rates_kbps(update_interval)[0], min_valid=0),
         "NET_DOWN_KBPS": lambda: _sticky_metric_value("NET_DOWN_KBPS", _network_rates_kbps(update_interval)[1], min_valid=0),
         "SOUND_VOLUME": lambda: _sticky_metric_value("SOUND_VOLUME", _sound_volume_percent(), min_valid=0),
+        "UPTIME_HOURS": lambda: _sticky_metric_value("UPTIME_HOURS", _uptime_hours(), min_valid=0),
     }
     reader = metric_readers.get(metric_name)
     if reader is None:

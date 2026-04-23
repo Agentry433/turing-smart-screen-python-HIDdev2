@@ -36,6 +36,7 @@ import requests
 import babel
 from datetime import datetime, timezone
 from library.smartmonitor_compile import compile_theme_file
+from library.smartmonitor_classic_theme_convert import convert_classic_theme_to_smartmonitor_project
 from library.smartmonitor_ui import encode_ui_file
 
 try:
@@ -52,8 +53,8 @@ try:
     from tktooltip import ToolTip
 except Exception as e:
     print("""Import error: %s
-Please see README.md / README_RU.md in the repository root for installation steps.
-If the GUI still does not start, check repository issues or discussions.""" % str(
+Please follow start guide to install required packages: https://github.com/mathoudebine/turing-smart-screen-python/wiki/System-monitor-:-how-to-start
+Or the troubleshooting page: https://github.com/mathoudebine/turing-smart-screen-python/wiki/Troubleshooting#all-os-tkinter-dependency-not-installed""" % str(
         e))
     try:
         sys.exit(0)
@@ -137,7 +138,7 @@ AUTOSTART_SERVICE_NAME = "turing-smart-screen-python.service"
 DEFAULT_SMARTMONITOR_VENDOR_THEME_ROOT = (
     os.path.join(MAIN_DIRECTORY, "vendor", "themefor3.5")
     if os.path.isdir(os.path.join(MAIN_DIRECTORY, "vendor", "themefor3.5"))
-    else os.path.join(MAIN_DIRECTORY, "vendor", "themefor3.5")
+    else "/tmp/smartmonitor_unpacked/app/themefor3.5"
 )
 DEFAULT_SMARTMONITOR_PROJECTS_DIR = os.path.join(MAIN_DIRECTORY, "res", "smartmonitor", "projects")
 
@@ -350,6 +351,10 @@ def autostart_service_path() -> Path:
     return autostart_service_dir() / AUTOSTART_SERVICE_NAME
 
 
+def autostart_service_template_path() -> Path:
+    return Path(MAIN_DIRECTORY) / "tools" / AUTOSTART_SERVICE_NAME
+
+
 def render_autostart_service() -> str:
     python_exec = Path(sys.executable).resolve()
     main_script = Path(MAIN_DIRECTORY) / "main.py"
@@ -486,6 +491,43 @@ def compile_and_import_smartmonitor_ui(theme_name: str, ui_path: str):
         },
     )
     return target_img
+
+
+def compile_and_import_classic_theme(theme_name: str, classic_theme_path: str):
+    project_root = Path(DEFAULT_SMARTMONITOR_PROJECTS_DIR) / "classic-converted"
+    result = convert_classic_theme_to_smartmonitor_project(
+        classic_theme_path,
+        project_root,
+        project_name=theme_name,
+    )
+    compiled = compile_theme_file(result.ui_path)
+    theme_dir = Path(smartmonitor_theme_dir(theme_name))
+    os.makedirs(theme_dir, exist_ok=True)
+    target_img = smartmonitor_theme_img(theme_name)
+    with open(target_img, "wb") as stream:
+        stream.write(compiled)
+    shutil.copy2(target_img, smartmonitor_bundled_dat_path(theme_name))
+
+    editable_project_dir = theme_dir / "source"
+    if editable_project_dir.exists():
+        shutil.rmtree(editable_project_dir)
+    shutil.copytree(result.output_dir, editable_project_dir)
+    editable_ui_path = editable_project_dir / result.ui_path.name
+
+    write_smartmonitor_theme_metadata(
+        theme_name,
+        {
+            "name": theme_name,
+            "source_theme": str(Path(classic_theme_path).resolve()),
+            "source_ui": str(editable_ui_path.resolve()),
+            "source_project": str(editable_project_dir.resolve()),
+            "compiled_at": datetime.now(timezone.utc).isoformat(),
+            "compiler": "classic_theme_to_imgdat",
+            "size": os.path.getsize(target_img),
+            "sha256": compute_file_sha256(target_img),
+        },
+    )
+    return target_img, result
 
 
 def create_smartmonitor_ui_project(project_dir: str, project_name: str):
@@ -697,7 +739,7 @@ class TuringConfigWindow:
     def __init__(self):
         self.window = Tk()
         self.window.title('Turing System Monitor configuration')
-        self.window.geometry("940x580")
+        self.window.geometry("940x640")
         self.window.iconphoto(True, PhotoImage(file=MAIN_DIRECTORY + "res/icons/monitor-icon-17865/64.png"))
         # When window gets focus again, reload theme preview in case it has been updated by theme editor
         self.window.bind("<FocusIn>", self.on_theme_change)
@@ -795,57 +837,57 @@ class TuringConfigWindow:
                                    "Fans missing from the list? Install lm-sensors package\n"
                                    "and run 'sudo sensors-detect' command, then reboot.")
 
-        self.weather_ping_btn = ttk.Button(self.window, text="Weather & ping",
+        self.weather_ping_btn = ttk.Button(self.window, text="Weather",
                                            command=lambda: self.on_weatherping_click())
-        self.weather_ping_btn.place(x=20, y=520, height=50, width=100)
+        self.weather_ping_btn.place(x=20, y=505, height=42, width=105)
 
-        self.open_theme_folder_btn = ttk.Button(self.window, text="Open themes\nfolder",
+        self.open_theme_folder_btn = ttk.Button(self.window, text="Themes",
                                          command=lambda: self.on_open_theme_folder_click())
-        self.open_theme_folder_btn.place(x=130, y=520, height=50, width=100)
+        self.open_theme_folder_btn.place(x=135, y=505, height=42, width=105)
 
         self.edit_theme_btn = ttk.Button(self.window, text="Edit theme", command=lambda: self.on_theme_editor_click())
-        self.edit_theme_btn.place(x=240, y=520, height=50, width=100)
+        self.edit_theme_btn.place(x=250, y=505, height=42, width=105)
 
         self.edit_ui_btn = ttk.Button(
             self.window,
             text="Edit UI",
             command=lambda: self.on_edit_ui_click(),
         )
-        self.edit_ui_btn.place(x=350, y=520, height=50, width=100)
+        self.edit_ui_btn.place(x=365, y=505, height=42, width=105)
 
         self.convert_theme_btn = ttk.Button(
             self.window,
             text="Convert",
             command=lambda: self.on_theme_convert_click(),
         )
-        self.convert_theme_btn.place(x=460, y=520, height=50, width=100)
+        self.convert_theme_btn.place(x=480, y=505, height=42, width=105)
 
         self.new_ui_btn = ttk.Button(
             self.window,
             text="New UI",
             command=lambda: self.on_new_ui_project_click(),
         )
-        self.new_ui_btn.place(x=570, y=520, height=50, width=100)
+        self.new_ui_btn.place(x=595, y=505, height=42, width=105)
 
         self.autostart_enable_btn = ttk.Button(
             self.window,
-            text="Enable\nautostart",
+            text="Autostart ON",
             command=lambda: self.on_enable_autostart_click(),
         )
-        self.autostart_enable_btn.place(x=680, y=520, height=50, width=100)
+        self.autostart_enable_btn.place(x=20, y=555, height=42, width=120)
 
         self.autostart_disable_btn = ttk.Button(
             self.window,
-            text="Disable\nautostart",
+            text="Autostart OFF",
             command=lambda: self.on_disable_autostart_click(),
         )
-        self.autostart_disable_btn.place(x=790, y=520, height=50, width=100)
+        self.autostart_disable_btn.place(x=150, y=555, height=42, width=120)
 
-        self.save_btn = ttk.Button(self.window, text="Save settings", command=lambda: self.on_save_click())
-        self.save_btn.place(x=900, y=520, height=50, width=110)
+        self.save_btn = ttk.Button(self.window, text="Save", command=lambda: self.on_save_click())
+        self.save_btn.place(x=280, y=555, height=42, width=120)
 
-        self.save_run_btn = ttk.Button(self.window, text="Save and run", command=lambda: self.on_saverun_click())
-        self.save_run_btn.place(x=1020, y=520, height=50, width=110)
+        self.save_run_btn = ttk.Button(self.window, text="Save + run", command=lambda: self.on_saverun_click())
+        self.save_run_btn.place(x=410, y=555, height=42, width=120)
 
         self.config = None
         self.load_config_values()
@@ -860,18 +902,18 @@ class TuringConfigWindow:
         if self.is_smartmonitor_model():
             themes = get_smartmonitor_themes()
             self.theme_label.config(text='SmartMonitor theme')
-            self.open_theme_folder_btn.config(text="Import vendor\nset")
-            self.edit_theme_btn.config(text="Import\n.dat")
-            self.edit_ui_btn.config(text="Open/Edit\nUI", state="normal")
-            self.convert_theme_btn.config(text="Convert\nUI->DAT", state="normal")
-            self.new_ui_btn.config(text="New UI\nproject", state="normal")
+            self.open_theme_folder_btn.config(text="Vendor set")
+            self.edit_theme_btn.config(text="Import .dat")
+            self.edit_ui_btn.config(text="Edit UI", state="normal")
+            self.convert_theme_btn.config(text="Convert")
+            self.new_ui_btn.config(text="New UI", state="normal")
         else:
             size = self.size_cb.get().replace(SIZE_2_x_INCH, SIZE_2_1_INCH)
             themes = get_themes(size)
             self.theme_label.config(text='Theme')
-            self.open_theme_folder_btn.config(text="Open themes\nfolder")
+            self.open_theme_folder_btn.config(text="Themes")
             self.edit_theme_btn.config(text="Edit theme")
-            self.edit_ui_btn.config(text="Open/Edit UI", state="disabled")
+            self.edit_ui_btn.config(text="Edit UI", state="disabled")
             self.convert_theme_btn.config(text="Convert", state="disabled")
             self.new_ui_btn.config(text="New UI", state="disabled")
 
@@ -1114,7 +1156,7 @@ class TuringConfigWindow:
 
     def on_theme_convert_click(self):
         if self.is_smartmonitor_model():
-            self.on_smartmonitor_ui_convert_click()
+            self.on_smartmonitor_convert_click()
             return
 
     def on_new_ui_project_click(self):
@@ -1404,6 +1446,88 @@ class TuringConfigWindow:
             f"Use Save or Save and run to activate it.",
             parent=self.window,
         )
+
+    def on_smartmonitor_classic_theme_convert_click(self):
+        theme_dir = filedialog.askdirectory(
+            parent=self.window,
+            title="Choose classic theme directory to convert",
+            initialdir=THEMES_DIR,
+            mustexist=True,
+        )
+        if not theme_dir:
+            return
+
+        theme_yaml = Path(theme_dir) / "theme.yaml"
+        if not theme_yaml.is_file():
+            messagebox.showerror(
+                "Invalid classic theme",
+                "The selected directory does not contain theme.yaml",
+                parent=self.window,
+            )
+            return
+
+        suggested_name = f"{Path(theme_dir).name}-smartmonitor"
+        theme_name = simpledialog.askstring(
+            "Convert classic theme",
+            "Theme name for the compiled .dat:",
+            parent=self.window,
+            initialvalue=suggested_name,
+        )
+        if theme_name is None:
+            return
+
+        theme_name = sanitize_smartmonitor_theme_name(theme_name)
+        if not theme_name:
+            messagebox.showerror("Invalid name", "Theme name cannot be empty.", parent=self.window)
+            return
+
+        target_img = smartmonitor_theme_img(theme_name)
+        if os.path.isfile(target_img):
+            overwrite = messagebox.askyesno(
+                "Overwrite theme?",
+                f"A SmartMonitor theme named '{theme_name}' already exists.\nOverwrite it?",
+                parent=self.window,
+            )
+            if not overwrite:
+                return
+
+        try:
+            _, result = compile_and_import_classic_theme(theme_name, str(theme_yaml))
+        except Exception as exc:
+            messagebox.showerror("Classic theme conversion failed", str(exc), parent=self.window)
+            return
+
+        self.refresh_theme_selector()
+        self.theme_cb.set(theme_name)
+        self.on_theme_change()
+        skipped = ""
+        if result.skipped_items:
+            preview = ", ".join(result.skipped_items[:6])
+            skipped = f"\n\nSkipped unsupported classic items:\n{preview}"
+            if len(result.skipped_items) > 6:
+                skipped += ", ..."
+        messagebox.showinfo(
+            "Classic theme converted",
+            f"Theme '{theme_name}' was converted from a classic YAML theme to SmartMonitor .dat.\n"
+            f"Use Save or Save and run to activate it.{skipped}",
+            parent=self.window,
+        )
+
+    def on_smartmonitor_convert_click(self):
+        source_kind = messagebox.askyesnocancel(
+            "Choose conversion source",
+            "What do you want to convert?\n\n"
+            "Yes: vendor SmartMonitor .ui -> .dat\n"
+            "No: classic YAML theme -> SmartMonitor .dat\n"
+            "Cancel: do nothing",
+            parent=self.window,
+        )
+        if source_kind is None:
+            return
+        if source_kind:
+            self.on_smartmonitor_ui_convert_click()
+        else:
+            self.on_smartmonitor_classic_theme_convert_click()
 
     def on_smartmonitor_new_ui_project_click(self):
         os.makedirs(DEFAULT_SMARTMONITOR_PROJECTS_DIR, exist_ok=True)
