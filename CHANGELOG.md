@@ -4,6 +4,17 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.3 - Classic Theme Batch Conversion
+
+- Added batch conversion of classic `theme.yaml` themes into SmartMonitor HID themes.
+- Added compatibility-style statuses for classic conversion results: converted, skipped features, unsupported.
+- Added classic preview rendering before conversion with a preview-only CLI mode.
+- Added JSON and Markdown compatibility reports for batch classic conversion runs.
+- Improved `LINE_GRAPH` and `RADIAL` fallbacks for classic themes.
+- Added static placeholder handling for unsupported runtime-driven fields such as weather, custom values, swap, and GPU FPS.
+- Added a `Classic batch` action to `configure.py` for converting and importing many classic themes at once.
+- Fixed the SmartMonitor GUI batch conversion path and synced the same workflow into the GitHub package.
+
 ## v0.3.2 - SmartMonitor GUI Workflow Refinements
 
 - Added separate SmartMonitor GUI actions for vendor `.ui` conversion and classic theme conversion.

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
 from typing import Any
@@ -88,6 +88,32 @@ class ClassicThemeConversionResult:
     ui_path: Path
     copied_assets: list[Path]
     skipped_items: list[str]
+    placeholder_items: list[str] = field(default_factory=list)
+    preview_path: Path | None = None
+
+    @property
+    def widget_count(self) -> int:
+        return len(self.bundle.theme.widgets)
+
+    @property
+    def status(self) -> str:
+        if self.skipped_items or self.placeholder_items:
+            return "skipped"
+        return "converted"
+
+
+@dataclass(slots=True)
+class ClassicThemeBatchItem:
+    theme_name: str
+    theme_path: Path
+    status: str
+    ui_path: Path | None = None
+    dat_path: Path | None = None
+    preview_path: Path | None = None
+    widget_count: int = 0
+    skipped_items: list[str] = field(default_factory=list)
+    placeholder_items: list[str] = field(default_factory=list)
+    error: str = ""
 
 
 @dataclass(slots=True)
@@ -213,6 +239,53 @@ def _copy_asset(src: Path, output_images_dir: Path, resize_to: tuple[int, int] |
     return target
 
 
+def render_classic_theme_preview(theme_path: str | Path, output_path: str | Path | None = None) -> Image.Image:
+    theme_data, theme_dir = _load_classic_theme(theme_path)
+    source_width, source_height = _source_canvas(theme_data)
+    transform = _ScaleTransform(source_width=source_width, source_height=source_height)
+    canvas = Image.new("RGB", (transform.target_width, transform.target_height), color="#0f1720")
+
+    background_src = _background_path(theme_data, theme_dir)
+    if background_src and background_src.is_file():
+        with Image.open(background_src) as image:
+            bg = image.convert("RGB").resize((transform.target_width, transform.target_height), Image.Resampling.LANCZOS)
+            canvas.paste(bg)
+
+    for name, node in (theme_data.get("static_images", {}) or {}).items():
+        if str(name).upper() == "BACKGROUND" or not isinstance(node, dict):
+            continue
+        image_path = node.get("PATH")
+        if not image_path:
+            continue
+        src = theme_dir / str(image_path)
+        if not src.is_file():
+            continue
+        try:
+            with Image.open(src) as image:
+                rendered = image.convert("RGBA").resize(
+                    (
+                        transform.scale_w(node.get("WIDTH", image.width)),
+                        transform.scale_h(node.get("HEIGHT", image.height)),
+                    ),
+                    Image.Resampling.LANCZOS,
+                )
+                canvas.paste(
+                    rendered.convert("RGB"),
+                    (
+                        transform.scale_x(node.get("X", 0) or 0),
+                        transform.scale_y(node.get("Y", 0) or 0),
+                    ),
+                )
+        except Exception:
+            continue
+
+    if output_path is not None:
+        target = Path(output_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        canvas.save(target)
+    return canvas
+
+
 def _widget_parent(width: int, height: int, background_asset: Path | None) -> WidgetParent:
     bg_path = f"./images/{background_asset.name}" if background_asset else ""
     return WidgetParent(
@@ -256,9 +329,10 @@ def _image_widget(
             fg_color=0,
             frame_color_raw="0x00000000",
             frame_color=0,
-            bg_image_path=f"./images/{asset.name}",
+            bg_image_path="",
             fg_image_path="",
         ),
+        raw_fields={"imagePath": f"./images/{asset.name}", "imageDelay": 100},
     )
 
 
@@ -281,6 +355,18 @@ def _static_text_widget(widget_id: int, object_name: str, node: dict[str, Any], 
         ),
         font=font,
     )
+
+
+def _placeholder_static_text_widget(
+    widget_id: int,
+    object_name: str,
+    node: dict[str, Any],
+    transform: _ScaleTransform,
+    label: str,
+) -> Widget:
+    placeholder_node = dict(node)
+    placeholder_node["TEXT"] = placeholder_node.get("TEXT") or label
+    return _static_text_widget(widget_id, object_name, placeholder_node, transform)
 
 
 def _number_widget(widget_id: int, object_name: str, node: dict[str, Any], sensor_key: tuple[str, ...], transform: _ScaleTransform) -> Widget | None:
@@ -363,6 +449,44 @@ def _progress_bar_widget(widget_id: int, object_name: str, node: dict[str, Any],
             sensor_name=sensor_name,
             reading_name=reading_name,
             is_div_1204=is_div_1204,
+        ),
+        raw_fields={"isHide": "0"},
+    )
+
+
+def _placeholder_progress_widget(
+    widget_id: int,
+    object_name: str,
+    node: dict[str, Any],
+    transform: _ScaleTransform,
+) -> Widget | None:
+    if not node.get("SHOW", True):
+        return None
+    bar_color_raw = _argb_from_rgb_triplet(node.get("BAR_COLOR"), "0xff808080")
+    bg_color_raw = _argb_from_rgb_triplet(node.get("BAR_BACKGROUND_COLOR"), "0xff202020")
+    frame_color_raw = _argb_from_rgb_triplet(node.get("AXIS_COLOR"), bar_color_raw)
+    return Widget(
+        global_id=widget_id,
+        same_type_id=widget_id,
+        parent_name="background",
+        object_name=object_name,
+        widget_type=3,
+        geometry=Geometry(
+            x=transform.scale_x(node.get("X", 0) or 0),
+            y=transform.scale_y(node.get("Y", 0) or 0),
+            width=transform.scale_w(node.get("WIDTH", 120) or 120),
+            height=max(8, transform.scale_h(node.get("HEIGHT", 14) or 14)),
+        ),
+        style=StyleSpec(
+            show_type=0,
+            bg_color_raw=bg_color_raw,
+            bg_color=int(bg_color_raw, 16),
+            fg_color_raw=bar_color_raw,
+            fg_color=int(bar_color_raw, 16),
+            frame_color_raw=frame_color_raw,
+            frame_color=int(frame_color_raw, 16),
+            bg_image_path="",
+            fg_image_path="",
         ),
         raw_fields={"isHide": "0"},
     )
@@ -565,12 +689,19 @@ def convert_classic_theme_to_smartmonitor_project(
 
     copied_assets: list[Path] = []
     skipped_items: list[str] = []
+    placeholder_items: list[str] = []
+    preview_path = project_dir / "preview.png"
 
     background_src = _background_path(theme_data, theme_dir)
     background_asset = None
     if background_src and background_src.is_file():
         background_asset = _copy_asset(background_src, images_dir, resize_to=(width, height))
         copied_assets.append(background_asset)
+
+    try:
+        render_classic_theme_preview(theme_dir, preview_path)
+    except Exception:
+        preview_path = None
 
     widgets: list[Widget] = []
     widget_id = 0
@@ -621,7 +752,7 @@ def convert_classic_theme_to_smartmonitor_project(
                 if widget is not None:
                     widgets.append(widget)
                     widget_id += 1
-                elif text_node:
+                elif text_node and text_node.get("SHOW", True):
                     skipped_items.append(f"DATE/{date_key}/TEXT")
             continue
 
@@ -655,7 +786,16 @@ def convert_classic_theme_to_smartmonitor_project(
                     widgets.append(widget)
                     widget_id += 1
                 elif text_node.get("SHOW", True):
-                    skipped_items.append(f"{section_name}/{metric_name}/{text_variant}")
+                    placeholder = _placeholder_static_text_widget(
+                        widget_id,
+                        f"{section_name}_{metric_name}_{text_variant}_PLACEHOLDER_{widget_id}",
+                        text_node,
+                        transform,
+                        f"{section_name} {metric_name}".replace("_", " "),
+                    )
+                    widgets.append(placeholder)
+                    widget_id += 1
+                    placeholder_items.append(f"{section_name}/{metric_name}/{text_variant}")
 
             for nested_metric_name in ("USED", "FREE", "TOTAL"):
                 nested_node = metric_node.get(nested_metric_name, {}) if isinstance(metric_node.get(nested_metric_name, {}), dict) else {}
@@ -672,7 +812,16 @@ def convert_classic_theme_to_smartmonitor_project(
                     widgets.append(widget)
                     widget_id += 1
                 elif nested_node.get("SHOW", True):
-                    skipped_items.append(f"{section_name}/{metric_name}/{nested_metric_name}")
+                    placeholder = _placeholder_static_text_widget(
+                        widget_id,
+                        f"{section_name}_{metric_name}_{nested_metric_name}_PLACEHOLDER_{widget_id}",
+                        nested_node,
+                        transform,
+                        f"{metric_name} {nested_metric_name}".replace("_", " "),
+                    )
+                    widgets.append(placeholder)
+                    widget_id += 1
+                    placeholder_items.append(f"{section_name}/{metric_name}/{nested_metric_name}")
 
             graph_node = metric_node.get("GRAPH", {}) if isinstance(metric_node.get("GRAPH", {}), dict) else {}
             if graph_node:
@@ -687,7 +836,18 @@ def convert_classic_theme_to_smartmonitor_project(
                     widgets.append(widget)
                     widget_id += 1
                 elif graph_node.get("SHOW", True):
-                    skipped_items.append(f"{section_name}/{metric_name}/GRAPH")
+                    placeholder = _placeholder_progress_widget(
+                        widget_id,
+                        f"{section_name}_{metric_name}_GRAPH_PLACEHOLDER_{widget_id}",
+                        graph_node,
+                        transform,
+                    )
+                    if placeholder is not None:
+                        widgets.append(placeholder)
+                        widget_id += 1
+                        placeholder_items.append(f"{section_name}/{metric_name}/GRAPH")
+                    else:
+                        skipped_items.append(f"{section_name}/{metric_name}/GRAPH")
 
             line_graph_node = metric_node.get("LINE_GRAPH", {}) if isinstance(metric_node.get("LINE_GRAPH", {}), dict) else {}
             if line_graph_node and not graph_node:
@@ -702,7 +862,18 @@ def convert_classic_theme_to_smartmonitor_project(
                     widgets.append(widget)
                     widget_id += 1
                 elif line_graph_node.get("SHOW", True):
-                    skipped_items.append(f"{section_name}/{metric_name}/LINE_GRAPH")
+                    placeholder = _placeholder_progress_widget(
+                        widget_id,
+                        f"{section_name}_{metric_name}_LINE_GRAPH_PLACEHOLDER_{widget_id}",
+                        line_graph_node,
+                        transform,
+                    )
+                    if placeholder is not None:
+                        widgets.append(placeholder)
+                        widget_id += 1
+                        placeholder_items.append(f"{section_name}/{metric_name}/LINE_GRAPH")
+                    else:
+                        skipped_items.append(f"{section_name}/{metric_name}/LINE_GRAPH")
 
             radial_node = metric_node.get("RADIAL", {}) if isinstance(metric_node.get("RADIAL", {}), dict) else {}
             if radial_node:
@@ -717,7 +888,18 @@ def convert_classic_theme_to_smartmonitor_project(
                     widgets.append(widget)
                     widget_id += 1
                 elif radial_node.get("SHOW", True):
-                    skipped_items.append(f"{section_name}/{metric_name}/RADIAL_BAR")
+                    placeholder = _placeholder_progress_widget(
+                        widget_id,
+                        f"{section_name}_{metric_name}_RADIAL_PLACEHOLDER_{widget_id}",
+                        radial_node,
+                        transform,
+                    )
+                    if placeholder is not None:
+                        widgets.append(placeholder)
+                        widget_id += 1
+                        placeholder_items.append(f"{section_name}/{metric_name}/RADIAL_BAR")
+                    else:
+                        skipped_items.append(f"{section_name}/{metric_name}/RADIAL_BAR")
 
                 text_widget = _radial_number_widget(
                     widget_id,
@@ -753,4 +935,55 @@ def convert_classic_theme_to_smartmonitor_project(
         ui_path=ui_path,
         copied_assets=copied_assets,
         skipped_items=skipped_items,
+        placeholder_items=placeholder_items,
+        preview_path=preview_path,
     )
+
+
+def find_classic_theme_files(root: str | Path) -> list[Path]:
+    root_path = Path(root)
+    return sorted(root_path.rglob("theme.yaml"))
+
+
+def batch_convert_classic_themes(
+    root: str | Path,
+    output_root: str | Path,
+    compile_root: str | Path | None = None,
+    preview_root: str | Path | None = None,
+) -> list[ClassicThemeBatchItem]:
+    from library.smartmonitor_compile import compile_theme_file
+
+    results: list[ClassicThemeBatchItem] = []
+    output_root = Path(output_root)
+    compile_root = Path(compile_root) if compile_root else None
+    preview_root = Path(preview_root) if preview_root else None
+
+    for theme_file in find_classic_theme_files(root):
+        theme_name = theme_file.parent.name
+        item = ClassicThemeBatchItem(theme_name=theme_name, theme_path=theme_file, status="unsupported")
+        try:
+            result = convert_classic_theme_to_smartmonitor_project(theme_file, output_root, project_name=theme_name)
+            item.ui_path = result.ui_path
+            item.preview_path = result.preview_path
+            item.widget_count = result.widget_count
+            item.skipped_items = list(result.skipped_items)
+            item.placeholder_items = list(result.placeholder_items)
+            item.status = result.status
+
+            if preview_root and result.preview_path and result.preview_path.is_file():
+                preview_target = Path(preview_root) / f"{theme_name}.png"
+                preview_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(result.preview_path, preview_target)
+                item.preview_path = preview_target
+
+            if compile_root is not None:
+                payload = compile_theme_file(result.ui_path)
+                dat_path = Path(compile_root) / f"{theme_name}.dat"
+                dat_path.parent.mkdir(parents=True, exist_ok=True)
+                dat_path.write_bytes(payload)
+                item.dat_path = dat_path
+        except Exception as exc:
+            item.error = str(exc)
+            item.status = "unsupported"
+        results.append(item)
+    return results

@@ -34,9 +34,13 @@ import sys
 import webbrowser
 import requests
 import babel
+from typing import Any
 from datetime import datetime, timezone
 from library.smartmonitor_compile import compile_theme_file
-from library.smartmonitor_classic_theme_convert import convert_classic_theme_to_smartmonitor_project
+from library.smartmonitor_classic_theme_convert import (
+    convert_classic_theme_to_smartmonitor_project,
+    find_classic_theme_files,
+)
 from library.smartmonitor_ui import encode_ui_file, parse_theme_bundle, resolve_theme_path
 
 try:
@@ -530,6 +534,23 @@ def compile_and_import_classic_theme(theme_name: str, classic_theme_path: str):
     return target_img, result
 
 
+def compile_and_import_classic_theme_batch(classic_root: str) -> tuple[list[str], list[str], list[tuple[str, Any]]]:
+    imported: list[str] = []
+    failed: list[str] = []
+    results: list[tuple[str, Any]] = []
+
+    for theme_yaml in find_classic_theme_files(classic_root):
+        theme_name = sanitize_smartmonitor_theme_name(theme_yaml.parent.name)
+        try:
+            _, result = compile_and_import_classic_theme(theme_name, str(theme_yaml))
+            imported.append(theme_name)
+            results.append((theme_name, result))
+        except Exception as exc:
+            failed.append(f"{theme_yaml.parent.name}: {exc}")
+
+    return imported, failed, results
+
+
 def create_smartmonitor_ui_project(project_dir: str, project_name: str):
     project_path = Path(project_dir)
     images_dir = project_path / "images"
@@ -1013,12 +1034,24 @@ class TuringConfigWindow:
                 "A linked editable .ui project is saved for later editing.",
         )
 
+        self.classic_batch_btn = ttk.Button(
+            self.window,
+            text="Classic batch",
+            command=lambda: self.on_smartmonitor_classic_batch_convert_click(),
+        )
+        self.classic_batch_btn.place(x=480, y=635, height=42, width=110)
+        self.classic_batch_tooltip = ToolTip(
+            self.classic_batch_btn,
+            msg="Convert every classic theme.yaml found under a folder into\n"
+                "SmartMonitor themes and import them into the GUI library.",
+        )
+
         self.new_ui_btn = ttk.Button(
             self.window,
             text="New UI",
             command=lambda: self.on_new_ui_project_click(),
         )
-        self.new_ui_btn.place(x=480, y=635, height=42, width=100)
+        self.new_ui_btn.place(x=600, y=635, height=42, width=100)
         self.new_ui_tooltip = ToolTip(
             self.new_ui_btn,
             msg="Create a new starter SmartMonitor UI project with background,\n"
@@ -1052,7 +1085,7 @@ class TuringConfigWindow:
             text="Force upload",
             command=lambda: self.on_force_upload_click(),
         )
-        self.force_upload_btn.place(x=590, y=635, height=42, width=110)
+        self.force_upload_btn.place(x=710, y=635, height=42, width=110)
         self.force_upload_tooltip = ToolTip(
             self.force_upload_btn,
             msg="Upload the currently selected SmartMonitor .dat theme immediately,\n"
@@ -1064,7 +1097,7 @@ class TuringConfigWindow:
             text="Doctor",
             command=lambda: self.on_doctor_click(),
         )
-        self.doctor_btn.place(x=710, y=635, height=42, width=90)
+        self.doctor_btn.place(x=830, y=635, height=42, width=80)
         self.doctor_tooltip = ToolTip(
             self.doctor_btn,
             msg="Run first-launch diagnostics: Python packages, config, themes,\n"
@@ -1107,6 +1140,7 @@ class TuringConfigWindow:
             self.edit_ui_btn.config(text="Edit UI", state="normal")
             self.vendor_convert_btn.config(text="Vendor UI", state="normal")
             self.classic_convert_btn.config(text="Classic->DAT", state="normal")
+            self.classic_batch_btn.config(text="Classic batch", state="normal")
             self.new_ui_btn.config(text="New UI", state="normal")
             self.force_upload_btn.config(state="normal")
         else:
@@ -1118,6 +1152,7 @@ class TuringConfigWindow:
             self.edit_ui_btn.config(text="Edit UI", state="disabled")
             self.vendor_convert_btn.config(text="Vendor UI", state="disabled")
             self.classic_convert_btn.config(text="Classic->DAT", state="disabled")
+            self.classic_batch_btn.config(text="Classic batch", state="disabled")
             self.new_ui_btn.config(text="New UI", state="disabled")
             self.force_upload_btn.config(state="disabled")
 
@@ -1770,6 +1805,75 @@ class TuringConfigWindow:
             f"Use Save or Save and run to activate it.{skipped}",
             parent=self.window,
         )
+
+    def on_smartmonitor_classic_batch_convert_click(self):
+        batch_root = filedialog.askdirectory(
+            parent=self.window,
+            title="Choose classic themes root for batch conversion",
+            initialdir=THEMES_DIR,
+            mustexist=True,
+        )
+        if not batch_root:
+            return
+
+        overwrite = messagebox.askyesno(
+            "Batch convert classic themes?",
+            "This will scan the selected folder for every classic theme.yaml,\n"
+            "compile each compatible theme to SmartMonitor .dat and overwrite\n"
+            "existing themes in the SmartMonitor library if names match.\n\n"
+            "Continue?",
+            parent=self.window,
+        )
+        if not overwrite:
+            return
+
+        try:
+            imported, failed, results = compile_and_import_classic_theme_batch(batch_root)
+        except Exception as exc:
+            messagebox.showerror("Classic batch conversion failed", str(exc), parent=self.window)
+            return
+
+        self.refresh_theme_selector()
+        if imported:
+            self.theme_cb.set(imported[0])
+            self.on_theme_change()
+
+        converted = sum(1 for _, result in results if not result.placeholder_items and not result.skipped_items)
+        skipped = len(results) - converted
+
+        message_lines = [
+            f"Imported: {len(imported)}",
+            f"Converted cleanly: {converted}",
+            f"Imported with placeholders/skips: {skipped}",
+            f"Failed: {len(failed)}",
+        ]
+
+        if imported:
+            preview = ", ".join(imported[:6])
+            if len(imported) > 6:
+                preview += ", ..."
+            message_lines.append(f"Themes: {preview}")
+
+        skipped_entries = [
+            f"{theme_name}: placeholders={len(result.placeholder_items)}, skipped={len(result.skipped_items)}"
+            for theme_name, result in results
+            if result.placeholder_items or result.skipped_items
+        ]
+        if skipped_entries:
+            message_lines.append("")
+            message_lines.append("Themes with placeholders/skipped features:")
+            message_lines.extend(skipped_entries[:8])
+            if len(skipped_entries) > 8:
+                message_lines.append("...")
+
+        if failed:
+            message_lines.append("")
+            message_lines.append("Errors:")
+            message_lines.extend(failed[:8])
+            if len(failed) > 8:
+                message_lines.append("...")
+
+        messagebox.showinfo("Classic batch conversion", "\n".join(message_lines), parent=self.window)
 
     def on_smartmonitor_new_ui_project_click(self):
         os.makedirs(DEFAULT_SMARTMONITOR_PROJECTS_DIR, exist_ok=True)
