@@ -108,6 +108,10 @@ Russian overview and usage notes are available in [README_RU.md](./README_RU.md)
 
 Release history is available in [CHANGELOG.md](./CHANGELOG.md).
 
+## Edit UI Manual
+
+Detailed SmartMonitor `Edit UI` usage instructions are available in [EDIT_UI_MANUAL.md](./EDIT_UI_MANUAL.md).
+
 ## 💰 Support the Project
 
 If you find this project useful, you can support the development with a donation:

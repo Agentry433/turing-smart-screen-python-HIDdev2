@@ -115,6 +115,10 @@ sudo udevadm trigger
 
 История релизов доступна в [CHANGELOG.md](./CHANGELOG.md).
 
+## Руководство по Edit UI
+
+Подробный мануал по работе с SmartMonitor `Edit UI` доступен в [EDIT_UI_MANUAL.md](./EDIT_UI_MANUAL.md).
+
 ## 💰 Поддержать проект
 
 Если проект оказался полезным, вы можете поддержать разработку донатом:
