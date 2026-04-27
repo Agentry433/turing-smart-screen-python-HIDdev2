@@ -657,10 +657,13 @@ def get_smartmonitor_bundled_dat_themes():
 
 
 def get_smartmonitor_themes():
-    names = list(get_smartmonitor_library_themes())
-    for filename in get_smartmonitor_bundled_dat_themes():
-        if filename not in names:
-            names.append(filename)
+    bundled = list(get_smartmonitor_bundled_dat_themes())
+    bundled_stems = {Path(filename).stem.casefold() for filename in bundled}
+    names = list(bundled)
+    for library_name in get_smartmonitor_library_themes():
+        if library_name.casefold() in bundled_stems:
+            continue
+        names.append(library_name)
     return sorted(names, key=str.casefold)
 
 
@@ -668,13 +671,20 @@ def resolve_smartmonitor_theme_path(name: str):
     if not name:
         return ""
 
+    bundled_candidates = []
+    if str(name).lower().endswith(".dat"):
+        bundled_candidates.append(os.path.join(THEMES_DIR, name))
+    else:
+        bundled_candidates.append(os.path.join(THEMES_DIR, f"{name}.dat"))
+        bundled_candidates.append(os.path.join(THEMES_DIR, name))
+
+    for bundled_path in bundled_candidates:
+        if os.path.isfile(bundled_path) and bundled_path.lower().endswith(".dat"):
+            return bundled_path
+
     library_path = smartmonitor_theme_img(name)
     if os.path.isfile(library_path):
         return library_path
-
-    bundled_path = os.path.join(THEMES_DIR, name)
-    if os.path.isfile(bundled_path) and bundled_path.lower().endswith(".dat"):
-        return bundled_path
 
     return ""
 
@@ -684,11 +694,18 @@ def get_smartmonitor_theme_info(name: str):
     if not resolved_path:
         return {}
 
+    metadata_name = Path(resolved_path).stem if resolved_path.lower().endswith(".dat") else name
+
+    metadata_file = smartmonitor_theme_metadata(metadata_name)
+    if os.path.isfile(metadata_file):
+        with open(metadata_file, "rt", encoding="utf8") as stream:
+            info, ind, bsi = ruamel.yaml.util.load_yaml_guess_indent(stream)
+            return info or {}
+
     if os.path.abspath(resolved_path).startswith(os.path.abspath(SMARTMONITOR_THEMES_DIR) + os.sep):
         metadata_file = smartmonitor_theme_metadata(name)
         if not os.path.isfile(metadata_file):
             return {}
-
         with open(metadata_file, "rt", encoding="utf8") as stream:
             info, ind, bsi = ruamel.yaml.util.load_yaml_guess_indent(stream)
             return info or {}
