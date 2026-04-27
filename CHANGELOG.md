@@ -4,6 +4,12 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.9 - DateTime Rendering Fixes
+
+- Extended SmartMonitor `DateTime` compilation so compiled themes can reuse a safe vendor donor payload instead of falling back to artifact-prone experimental rendering.
+- Improved `DateTime` behavior for both vendor-derived themes and newly created custom themes that use date/time widgets.
+- Rebuilt shipped SmartMonitor themes so date/time widgets in themes such as `theme_computer case.dat` and `theme_computer case1.dat` render cleanly.
+
 ## v0.3.8 - Autostart via run-monitor.sh
 
 - Switched generated `systemd --user` autostart units to launch `run-monitor.sh` instead of calling `main.py` directly.

@@ -293,6 +293,45 @@ def _datetime_donor_payloads(bundle: SmartMonitorThemeBundle) -> dict[int, tuple
     return _load_vendor_datetime_payloads(str(donor))
 
 
+def _datetime_preview_kind(preview: str) -> str:
+    normalized = (preview or "").strip().lower()
+    has_time = ":" in normalized
+    has_date = any(separator in normalized for separator in ("-", "/", "."))
+    if has_time and has_date:
+        return "datetime"
+    if has_date:
+        return "date"
+    return "time"
+
+
+@lru_cache(maxsize=1)
+def _generic_datetime_donor_payloads() -> dict[str, tuple[dict[str, Any], bytes]]:
+    donor_payloads = _load_vendor_datetime_payloads(str(ROG03_VENDOR_IMGDAT))
+    generic: dict[str, tuple[dict[str, Any], bytes]] = {}
+    for fields, payload in donor_payloads.values():
+        preview = str(fields.get("format_preview", ""))
+        kind = _datetime_preview_kind(preview)
+        generic.setdefault(kind, (dict(fields), payload))
+
+    # ROG03 has separate date and time widgets, but no combined date+time widget.
+    # Reuse the time donor as the safest generic fallback for mixed date+time formats.
+    if "datetime" not in generic:
+        if "time" in generic:
+            generic["datetime"] = generic["time"]
+        elif "date" in generic:
+            generic["datetime"] = generic["date"]
+    if "time" not in generic and "datetime" in generic:
+        generic["time"] = generic["datetime"]
+    if "date" not in generic and "datetime" in generic:
+        generic["date"] = generic["datetime"]
+    return generic
+
+
+def _generic_datetime_donor_entry(preview: str) -> tuple[dict[str, Any], bytes] | None:
+    generic = _generic_datetime_donor_payloads()
+    return generic.get(_datetime_preview_kind(preview))
+
+
 def _datetime_format_preview(widget: Widget) -> str:
     fmt = (widget.datetime_format or "").lower()
     mapping = {
@@ -328,18 +367,25 @@ def _datetime_widget_record(
     widget: Widget,
     offset: int,
 ) -> tuple[CompiledSmartMonitorRecord, bytes]:
+    preview = _datetime_format_preview(widget)
     vendor_entry = _datetime_donor_payloads(bundle).get(widget.global_id + 1)
+    if vendor_entry is None:
+        vendor_entry = _generic_datetime_donor_entry(preview)
     if vendor_entry is not None:
         fields, payload = vendor_entry
         fields = dict(fields)
+        font_color = widget.font.color if widget.font else 0
         fields["widget_id"] = widget.global_id + 1
         fields["x"] = widget.geometry.x
         fields["y"] = widget.geometry.y
         fields["width"] = widget.geometry.width
         fields["height"] = widget.geometry.height
+        fields["h_align"] = int(widget.raw_fields.get("hAlign", fields.get("h_align", 0)) or 0)
+        fields["font_color_rgb565"] = rgb24_to_rgb565(font_color & 0xFFFFFF)
+        fields["font_alpha"] = (font_color >> 24) & 0xFF
+        fields["format_preview"] = preview
         return CompiledSmartMonitorRecord(record_type=0x8E, fields=fields), payload
 
-    preview = _datetime_format_preview(widget)
     rendered = render_datetime_preview_payload(preview, widget.font)
     font_color = widget.font.color if widget.font else 0
     record = CompiledSmartMonitorRecord(
