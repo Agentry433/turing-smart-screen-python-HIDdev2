@@ -40,6 +40,20 @@ source venv/bin/activate
 python3 configure.py
 ```
 
+Alternative launcher-based start without manual virtualenv activation:
+
+```bash
+chmod +x install.sh run-configure.sh run-monitor.sh
+./install.sh
+./run-configure.sh
+```
+
+Useful launcher scripts:
+
+- `./run-configure.sh` — starts `configure.py` through `venv/bin/python`
+- `./run-monitor.sh` — starts `main.py` through `venv/bin/python`
+- `Save + run` inside the configurator also works with `./run-configure.sh` and continues directly into `main.py`
+
 Manual:
 
 ```bash
