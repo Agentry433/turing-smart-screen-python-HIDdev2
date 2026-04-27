@@ -100,6 +100,7 @@ class SmartMonitorThemeEditor:
         self.window.bind("<Down>", lambda e: self.on_nudge(0, 1))
         self.window.bind("<Control-z>", lambda e: self.on_undo())
         self.window.bind("<Control-y>", lambda e: self.on_redo())
+        self.window.bind("<Control-a>", lambda e: self.on_select_all())
 
         self.path_label = ttk.Label(self.window, text=str(self.ui_path))
         self.path_label.place(x=280, y=10)
@@ -123,7 +124,7 @@ class SmartMonitorThemeEditor:
         self.bg_image_var = StringVar()
         self.image_path_var = StringVar()
         self.bg_color_var = StringVar()
-        self.grid_enabled_var = IntVar(value=1)
+        self.grid_enabled_var = IntVar(value=0)
         self.grid_size_var = StringVar(value="10")
 
         self._entry("Object name", self.name_var, 280, 50)
@@ -160,7 +161,7 @@ class SmartMonitorThemeEditor:
         ttk.Entry(self.window, textvariable=self.grid_size_var).place(x=625, y=405, width=45)
 
         toolbar = ttk.LabelFrame(self.window, text="Toolbar")
-        toolbar.place(x=280, y=445, width=820, height=110)
+        toolbar.place(x=280, y=445, width=1380, height=110)
         ttk.Button(toolbar, text="Apply", command=self.on_apply).place(x=10, y=10, width=90, height=32)
         ttk.Button(toolbar, text="Save UI", command=self.on_save).place(x=110, y=10, width=90, height=32)
         ttk.Button(toolbar, text="Save As", command=self.on_save_as).place(x=210, y=10, width=90, height=32)
@@ -178,6 +179,14 @@ class SmartMonitorThemeEditor:
         ttk.Button(toolbar, text="Align Top", command=lambda: self.on_align("top")).place(x=680, y=52, width=100, height=32)
         ttk.Button(toolbar, text="Align HCenter", command=lambda: self.on_align("hcenter")).place(x=790, y=10, width=110, height=32)
         ttk.Button(toolbar, text="Align VCenter", command=lambda: self.on_align("vcenter")).place(x=790, y=52, width=110, height=32)
+        ttk.Button(toolbar, text="Center X", command=lambda: self.on_center_axis("x")).place(x=910, y=10, width=90, height=32)
+        ttk.Button(toolbar, text="Center Y", command=lambda: self.on_center_axis("y")).place(x=910, y=52, width=90, height=32)
+        ttk.Button(toolbar, text="Bring Front", command=lambda: self.on_reorder("front")).place(x=1010, y=10, width=100, height=32)
+        ttk.Button(toolbar, text="Send Back", command=lambda: self.on_reorder("back")).place(x=1010, y=52, width=100, height=32)
+        ttk.Button(toolbar, text="Center Both", command=lambda: self.on_center_axis("both")).place(x=1120, y=10, width=110, height=32)
+        ttk.Button(toolbar, text="Select All", command=self.on_select_all).place(x=1240, y=10, width=90, height=32)
+        ttk.Button(toolbar, text="Dist. H", command=lambda: self.on_distribute("h")).place(x=1120, y=52, width=100, height=32)
+        ttk.Button(toolbar, text="Dist. V", command=lambda: self.on_distribute("v")).place(x=1230, y=52, width=100, height=32)
 
         self.canvas = Canvas(self.window, width=480, height=320, bg="#111827", highlightthickness=1, highlightbackground="#64748b")
         self.canvas.place(x=1160, y=50)
@@ -388,14 +397,20 @@ class SmartMonitorThemeEditor:
     def _grid_size(self) -> int:
         return max(1, _safe_int(self.grid_size_var.get(), 10))
 
-    def _snap(self, value: int) -> int:
-        if not self.grid_enabled_var.get():
+    def _grid_snap_active(self, event_state: int = 0) -> bool:
+        # Hold Shift while dragging to temporarily bypass grid snapping.
+        if event_state & 0x0001:
+            return False
+        return bool(self.grid_enabled_var.get())
+
+    def _snap(self, value: int, event_state: int = 0) -> int:
+        if not self._grid_snap_active(event_state):
             return value
         grid = self._grid_size()
         return int(round(value / grid) * grid)
 
     def _draw_grid(self):
-        if not self.grid_enabled_var.get():
+        if not self._grid_snap_active():
             return
         grid = self._grid_size()
         for x in range(grid, 480, grid):
@@ -404,7 +419,7 @@ class SmartMonitorThemeEditor:
             self.canvas.create_line(0, y, 480, y, fill="#1f2937", width=1)
 
     def _draw_snap_guides(self, x1: int, y1: int, x2: int, y2: int):
-        if not self.grid_enabled_var.get():
+        if not self._grid_snap_active():
             return
         guide = "#38bdf8"
         self.canvas.create_line(x1, 0, x1, 320, fill=guide, dash=(4, 3))
@@ -910,15 +925,15 @@ class SmartMonitorThemeEditor:
             new_w = base_w
             new_h = base_h
             if "e" in mode:
-                new_w = max(20, self._snap(base_w + delta_x))
+                new_w = max(20, self._snap(base_w + delta_x, event.state))
             if "s" in mode:
-                new_h = max(20, self._snap(base_h + delta_y))
+                new_h = max(20, self._snap(base_h + delta_y, event.state))
             if "w" in mode:
-                new_x = self._snap(base_x + delta_x)
-                new_w = max(20, self._snap(base_w - delta_x))
+                new_x = self._snap(base_x + delta_x, event.state)
+                new_w = max(20, self._snap(base_w - delta_x, event.state))
             if "n" in mode:
-                new_y = self._snap(base_y + delta_y)
-                new_h = max(20, self._snap(base_h - delta_y))
+                new_y = self._snap(base_y + delta_y, event.state)
+                new_h = max(20, self._snap(base_h - delta_y, event.state))
 
             if new_x < 0:
                 new_w += new_x
@@ -935,16 +950,16 @@ class SmartMonitorThemeEditor:
         else:
             targets = self._selected_widget_indexes() or [self.selection[1]]
             if len(targets) == 1:
-                obj.geometry.x = max(0, min(480 - obj.geometry.width, self._snap(base_x + delta_x)))
-                obj.geometry.y = max(0, min(320 - obj.geometry.height, self._snap(base_y + delta_y)))
+                obj.geometry.x = max(0, min(480 - obj.geometry.width, self._snap(base_x + delta_x, event.state)))
+                obj.geometry.y = max(0, min(320 - obj.geometry.height, self._snap(base_y + delta_y, event.state)))
             else:
                 # Push one undo entry per drag gesture.
                 if getattr(self, "_drag_undo_pushed", False) is False:
                     self._push_undo_state()
                     self._drag_undo_pushed = True
                 primary_index = self.selection[1]
-                dx = self._snap(base_x + delta_x) - base_x
-                dy = self._snap(base_y + delta_y) - base_y
+                dx = self._snap(base_x + delta_x, event.state) - base_x
+                dy = self._snap(base_y + delta_y, event.state) - base_y
                 for idx in targets:
                     widget = self.theme.widgets[idx]
                     if idx == primary_index:
@@ -1001,6 +1016,77 @@ class SmartMonitorThemeEditor:
                 widget.geometry.y = anchor.geometry.y + (anchor.geometry.height - widget.geometry.height) // 2
             widget.geometry.x = max(0, min(480 - widget.geometry.width, self._snap(widget.geometry.x)))
             widget.geometry.y = max(0, min(320 - widget.geometry.height, self._snap(widget.geometry.y)))
+        self.refresh_items()
+
+    def on_center_axis(self, axis: str):
+        indexes = self._selected_widget_indexes()
+        if not indexes:
+            self._show_info("Center", "Select one or more widgets first.")
+            return
+        self._push_undo_state()
+        for idx in indexes:
+            widget = self.theme.widgets[idx]
+            if axis in ("x", "both"):
+                widget.geometry.x = self._snap((480 - widget.geometry.width) // 2)
+                widget.geometry.x = max(0, min(480 - widget.geometry.width, widget.geometry.x))
+            if axis in ("y", "both"):
+                widget.geometry.y = self._snap((320 - widget.geometry.height) // 2)
+                widget.geometry.y = max(0, min(320 - widget.geometry.height, widget.geometry.y))
+        self.refresh_items()
+
+    def on_select_all(self):
+        if not self.theme.widgets:
+            return
+        self.selected_widgets = set(range(len(self.theme.widgets)))
+        self.selection = ("widget", 0)
+        self.refresh_items()
+        self._populate_form_from_selection()
+
+    def on_distribute(self, axis: str):
+        indexes = self._selected_widget_indexes()
+        if len(indexes) < 3:
+            self._show_info("Distribute", "Select at least three widgets first.")
+            return
+        self._push_undo_state()
+        widgets = [self.theme.widgets[idx] for idx in indexes]
+        if axis == "h":
+            ordered = sorted(zip(indexes, widgets), key=lambda item: item[1].geometry.x)
+            first = ordered[0][1]
+            last = ordered[-1][1]
+            usable = (last.geometry.x - first.geometry.x) - sum(item[1].geometry.width for item in ordered[1:-1])
+            gap = usable // max(1, len(ordered) - 1)
+            cursor = first.geometry.x + first.geometry.width + gap
+            for _, widget in ordered[1:-1]:
+                widget.geometry.x = max(0, min(480 - widget.geometry.width, self._snap(cursor)))
+                cursor = widget.geometry.x + widget.geometry.width + gap
+        else:
+            ordered = sorted(zip(indexes, widgets), key=lambda item: item[1].geometry.y)
+            first = ordered[0][1]
+            last = ordered[-1][1]
+            usable = (last.geometry.y - first.geometry.y) - sum(item[1].geometry.height for item in ordered[1:-1])
+            gap = usable // max(1, len(ordered) - 1)
+            cursor = first.geometry.y + first.geometry.height + gap
+            for _, widget in ordered[1:-1]:
+                widget.geometry.y = max(0, min(320 - widget.geometry.height, self._snap(cursor)))
+                cursor = widget.geometry.y + widget.geometry.height + gap
+        self.refresh_items()
+
+    def on_reorder(self, mode: str):
+        indexes = self._selected_widget_indexes()
+        if not indexes:
+            self._show_info("Reorder", "Select one or more widgets first.")
+            return
+        self._push_undo_state()
+        selected = [self.theme.widgets[idx] for idx in indexes]
+        remaining = [widget for idx, widget in enumerate(self.theme.widgets) if idx not in set(indexes)]
+        if mode == "front":
+            self.theme.widgets = remaining + selected
+            new_indexes = list(range(len(remaining), len(remaining) + len(selected)))
+        else:
+            self.theme.widgets = selected + remaining
+            new_indexes = list(range(len(selected)))
+        self.selection = ("widget", new_indexes[0])
+        self.selected_widgets = set(new_indexes)
         self.refresh_items()
 
     def on_save(self):
