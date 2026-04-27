@@ -118,7 +118,15 @@ If you find this project useful, you can support the development with a donation
 
 TON Wallet:
 
-`UQD-RzivaF2yxBF81Zzf44WE84Y3pS24QL751Z5nYC3PosRJ`
+`UQAnWldcIWfwKUmnJN5kMqW5VY6SuVwTtrnRpDEE_rilh8Qj`
+
+Bitcoin (BTC):
+
+`bc1qelwv8jm2j9pughk5rte0fap2gzvyhtgzwglutf`
+
+Ethereum (ETH):
+
+`0x6Ab5F41A4eF61E6F7517f4D89f759c94500e66e1`
 
 Donate TON
 
