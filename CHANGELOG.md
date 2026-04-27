@@ -4,6 +4,13 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.7 - Launcher and Save+Run Flow
+
+- Added `run-configure.sh` for launching the configuration GUI without manual virtualenv activation.
+- Added `run-monitor.sh` for launching `main.py` directly from the managed virtualenv.
+- Updated `install.sh` to recommend the new launcher scripts instead of `source venv/bin/activate`.
+- Fixed the `Save + run` flow so `./run-configure.sh` can continue directly into `main.py` after closing the configurator.
+
 ## v0.3.6 - Precise Canvas Dragging
 
 - Improved SmartMonitor editor dragging and resizing for precise pixel positioning on the canvas.

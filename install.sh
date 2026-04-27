@@ -53,5 +53,7 @@ echo "Running doctor..."
 echo
 echo "Install complete."
 echo "Start configuration with:"
-echo "  source $VENV_DIR/bin/activate"
-echo "  python3 configure.py"
+echo "  ./run-configure.sh"
+echo
+echo "Start the monitor runtime with:"
+echo "  ./run-monitor.sh"

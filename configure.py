@@ -139,6 +139,8 @@ MAIN_DIRECTORY = str(Path(__file__).parent.resolve()) + "/"
 THEMES_DIR = MAIN_DIRECTORY + 'res/themes'
 SMARTMONITOR_THEMES_DIR = MAIN_DIRECTORY + 'res/smartmonitor/themes'
 AUTOSTART_SERVICE_NAME = "turing-smart-screen-python.service"
+PREFERRED_VENV_PYTHON = Path(MAIN_DIRECTORY) / "venv" / "bin" / "python"
+CONFIGURE_RUN_MONITOR_EXIT_CODE = 42
 DEFAULT_SMARTMONITOR_VENDOR_THEME_ROOT = (
     os.path.join(MAIN_DIRECTORY, "vendor", "themefor3.5")
     if os.path.isdir(os.path.join(MAIN_DIRECTORY, "vendor", "themefor3.5"))
@@ -359,8 +361,14 @@ def autostart_service_template_path() -> Path:
     return Path(MAIN_DIRECTORY) / "tools" / AUTOSTART_SERVICE_NAME
 
 
+def preferred_python_exec() -> Path:
+    if PREFERRED_VENV_PYTHON.is_file() and os.access(PREFERRED_VENV_PYTHON, os.X_OK):
+        return PREFERRED_VENV_PYTHON.resolve()
+    return Path(sys.executable).resolve()
+
+
 def render_autostart_service() -> str:
-    python_exec = Path(sys.executable).resolve()
+    python_exec = preferred_python_exec()
     main_script = Path(MAIN_DIRECTORY) / "main.py"
     working_dir = Path(MAIN_DIRECTORY).resolve()
     return "\n".join([
@@ -871,6 +879,7 @@ def get_fans():
 class TuringConfigWindow:
     def __init__(self):
         self.window = Tk()
+        self.run_main_after_exit = False
         self.window.title('Turing System Monitor configuration')
         self.window.geometry("940x980")
         self.window.iconphoto(True, PhotoImage(file=MAIN_DIRECTORY + "res/icons/monitor-icon-17865/64.png"))
@@ -1175,6 +1184,7 @@ class TuringConfigWindow:
 
     def run(self):
         self.window.mainloop()
+        return CONFIGURE_RUN_MONITOR_EXIT_CODE if self.run_main_after_exit else 0
 
     def is_smartmonitor_model(self):
         return self.model_cb.get() == USB_HID_MODEL
@@ -1772,7 +1782,7 @@ class TuringConfigWindow:
     def on_saverun_click(self):
         self.save_config_values()
         self.stop_running_main_instances()
-        subprocess.Popen(f'"{MAIN_DIRECTORY}{glob.glob("main.*", root_dir=MAIN_DIRECTORY)[0]}"', shell=True)
+        self.run_main_after_exit = True
         self.window.destroy()
 
     def on_brightness_change(self, e=None):
@@ -2502,4 +2512,4 @@ class MoreConfigWindow:
 
 if __name__ == "__main__":
     configurator = TuringConfigWindow()
-    configurator.run()
+    sys.exit(configurator.run())
