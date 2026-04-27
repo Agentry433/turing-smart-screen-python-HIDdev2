@@ -14,7 +14,7 @@ Type=simple
 ;    systemctl --user enable --now turing-smart-screen-python.service
 
 WorkingDirectory=/absolute/path/to/turing-smart-screen-python-main
-ExecStart=/absolute/path/to/python /absolute/path/to/turing-smart-screen-python-main/main.py
+ExecStart=/bin/bash -lc 'cd /absolute/path/to/turing-smart-screen-python-main && exec /absolute/path/to/turing-smart-screen-python-main/run-monitor.sh'
 Restart=on-failure
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1

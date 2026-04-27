@@ -4,6 +4,12 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.8 - Autostart via run-monitor.sh
+
+- Switched generated `systemd --user` autostart units to launch `run-monitor.sh` instead of calling `main.py` directly.
+- Fixed autostart service generation for project paths containing spaces or non-ASCII characters by routing startup through `/bin/bash -lc`.
+- Updated the bundled `turing-smart-screen-python.service` template to match the new launcher-based autostart flow.
+
 ## v0.3.7 - Launcher and Save+Run Flow
 
 - Added `run-configure.sh` for launching the configuration GUI without manual virtualenv activation.

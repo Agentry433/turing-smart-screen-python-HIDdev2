@@ -28,6 +28,7 @@ import glob
 import hashlib
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -141,12 +142,16 @@ SMARTMONITOR_THEMES_DIR = MAIN_DIRECTORY + 'res/smartmonitor/themes'
 AUTOSTART_SERVICE_NAME = "turing-smart-screen-python.service"
 PREFERRED_VENV_PYTHON = Path(MAIN_DIRECTORY) / "venv" / "bin" / "python"
 CONFIGURE_RUN_MONITOR_EXIT_CODE = 42
+DEFAULT_SMARTMONITOR_PROJECTS_DIR = os.path.join(MAIN_DIRECTORY, "res", "smartmonitor", "projects")
 DEFAULT_SMARTMONITOR_VENDOR_THEME_ROOT = (
     os.path.join(MAIN_DIRECTORY, "vendor", "themefor3.5")
     if os.path.isdir(os.path.join(MAIN_DIRECTORY, "vendor", "themefor3.5"))
-    else "/tmp/smartmonitor_unpacked/app/themefor3.5"
+    else (
+        os.path.join(MAIN_DIRECTORY, "WIND", "3.5 Inch SmartMonitor", "themefor3.5")
+        if os.path.isdir(os.path.join(MAIN_DIRECTORY, "WIND", "3.5 Inch SmartMonitor", "themefor3.5"))
+        else DEFAULT_SMARTMONITOR_PROJECTS_DIR
+    )
 )
-DEFAULT_SMARTMONITOR_PROJECTS_DIR = os.path.join(MAIN_DIRECTORY, "res", "smartmonitor", "projects")
 
 SMARTMONITOR_UI_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <ui>
@@ -368,9 +373,9 @@ def preferred_python_exec() -> Path:
 
 
 def render_autostart_service() -> str:
-    python_exec = preferred_python_exec()
-    main_script = Path(MAIN_DIRECTORY) / "main.py"
+    launcher_script = (Path(MAIN_DIRECTORY) / "run-monitor.sh").resolve()
     working_dir = Path(MAIN_DIRECTORY).resolve()
+    command = f"cd {shlex.quote(str(working_dir))} && exec {shlex.quote(str(launcher_script))}"
     return "\n".join([
         "[Unit]",
         "Description=Turing Smart Screen Python HIDdev",
@@ -380,7 +385,7 @@ def render_autostart_service() -> str:
         "[Service]",
         "Type=simple",
         f"WorkingDirectory={working_dir}",
-        f"ExecStart={python_exec} {main_script}",
+        f"ExecStart=/bin/bash -lc {shlex.quote(command)}",
         "Restart=on-failure",
         "RestartSec=3",
         "Environment=PYTHONUNBUFFERED=1",
