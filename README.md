@@ -128,6 +128,4 @@ Ethereum (ETH):
 
 `0x6Ab5F41A4eF61E6F7517f4D89f759c94500e66e1`
 
-Donate TON
-
 Every donation helps keep the project alive and motivates further development. Thank you! ❤️
