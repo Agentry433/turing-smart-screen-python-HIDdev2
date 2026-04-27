@@ -4,6 +4,12 @@ All notable changes to this fork are documented here.
 
 The format is based on a simple chronological release history.
 
+## v0.3.6 - Precise Canvas Dragging
+
+- Improved SmartMonitor editor dragging and resizing for precise pixel positioning on the canvas.
+- Grid snapping is no longer forced during drag when the grid is disabled.
+- Holding `Shift` while dragging or resizing now temporarily bypasses snap-to-grid for fine adjustment.
+
 ## v0.3.5 - SmartMonitor Theme Editor Polish
 
 - Added multi-side resize handles in the SmartMonitor theme editor.
