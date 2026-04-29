@@ -1,6 +1,6 @@
-# turing-smart-screen-python-HIDdev
+# turing-smart-screen-python-HIDdev2
 
-`turing-smart-screen-python-HIDdev` is a modified fork of `turing-smart-screen-python` with added support for 3.5" SmartMonitor devices that appear on Linux as USB HID (`0483:0065`) instead of serial/TTY displays.
+`turing-smart-screen-python-HIDdev2` is a modified fork of `turing-smart-screen-python` with added support for 3.5" SmartMonitor devices that appear on Linux as USB HID (`0483:0065`) instead of serial/TTY displays.
 
 Based on the original project:
 
