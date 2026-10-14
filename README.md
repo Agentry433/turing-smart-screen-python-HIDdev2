@@ -9,7 +9,7 @@ Based on the original project:
 ## Features
 
 - Linux `hidraw` backend for SmartMonitor
-- Theme upload over HID/YMODEM
+- Theme upload over HID/YMODEM?
 - Live runtime metrics for CPU, GPU, RAM, disk and network
 - Vendor theme support (`.dat`)
 - Vendor UI conversion (`.ui -> .dat`)
